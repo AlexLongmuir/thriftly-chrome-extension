@@ -1,0 +1,5 @@
+node_modules/
+dist/
+.playwright-mcp/
+quality-check-stage1-panel.png
+.DS_Store
