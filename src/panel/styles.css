@@ -157,3 +157,10 @@ h2 {
   font-size: 13px;
   line-height: 1.4;
 }
+
+.field-meta {
+  display: block;
+  margin-top: 2px;
+  color: #64748b;
+  font-size: 11px;
+}

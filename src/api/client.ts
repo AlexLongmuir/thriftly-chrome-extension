@@ -23,11 +23,12 @@ export async function submitQualityCheck(payload: BackendPayload): Promise<Backe
 }
 
 function createMockVerdict(payload: BackendPayload): BackendVerdict {
-  const title = payload.page.title || "Untitled page";
+  const title = String(payload.page.product.fields.title.value || payload.page.title || "Untitled page");
+  const confidence = payload.page.product.sourceConfidenceScore;
 
   return {
     requestId: `mock-${Date.now()}`,
-    summary: `Stage 1 connection succeeded for "${title}". Real analysis starts in later stages.`,
+    summary: `Stage 2 extraction succeeded for "${title}" with ${payload.page.product.sourceMethod} evidence and ${confidence} source confidence.`,
     receivedUrl: payload.page.url,
     source: "mock",
     capturedTitle: title

@@ -4,6 +4,7 @@ import {
   type ExtensionMessage,
   type PageSnapshot
 } from "./shared/messages";
+import { enrichPageSnapshotWithRetailerFallbacks } from "./shared/retailerFallbacks";
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
@@ -27,32 +28,68 @@ async function getActiveTab(): Promise<chrome.tabs.Tab> {
 
 async function extractFromActiveTab(): Promise<ActiveTabExtraction> {
   const tab = await getActiveTab();
+  let snapshot: PageSnapshot;
 
   try {
-    const snapshot = (await chrome.tabs.sendMessage(tab.id!, {
+    snapshot = (await chrome.tabs.sendMessage(tab.id!, {
       type: MESSAGE_TYPES.EXTRACT_PAGE_DATA
     })) as PageSnapshot;
-
-    return {
-      tabId: tab.id!,
-      tabUrl: tab.url,
-      snapshot
-    };
   } catch {
     await chrome.scripting.executeScript({
       target: { tabId: tab.id! },
       files: ["contentScript.js"]
     });
 
-    const snapshot = (await chrome.tabs.sendMessage(tab.id!, {
+    snapshot = (await chrome.tabs.sendMessage(tab.id!, {
       type: MESSAGE_TYPES.EXTRACT_PAGE_DATA
     })) as PageSnapshot;
+  }
 
-    return {
-      tabId: tab.id!,
-      tabUrl: tab.url,
-      snapshot
-    };
+  await withRetailerHeaderRules(() => enrichPageSnapshotWithRetailerFallbacks(snapshot, new URL(snapshot.url)));
+
+  return {
+    tabId: tab.id!,
+    tabUrl: tab.url,
+    snapshot
+  };
+}
+
+async function withRetailerHeaderRules<T>(callback: () => Promise<T>): Promise<T> {
+  const allSaintsCrawlerRuleId = 9001;
+  const canModifyHeaders = Boolean(chrome.declarativeNetRequest?.updateSessionRules);
+
+  if (!canModifyHeaders) return callback();
+
+  await chrome.declarativeNetRequest.updateSessionRules({
+    removeRuleIds: [allSaintsCrawlerRuleId],
+    addRules: [
+      {
+        id: allSaintsCrawlerRuleId,
+        priority: 1,
+        action: {
+          type: chrome.declarativeNetRequest.RuleActionType.MODIFY_HEADERS,
+          requestHeaders: [
+            {
+              header: "user-agent",
+              operation: chrome.declarativeNetRequest.HeaderOperation.SET,
+              value: "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"
+            }
+          ]
+        },
+        condition: {
+          requestDomains: ["www.allsaints.com"],
+          resourceTypes: [chrome.declarativeNetRequest.ResourceType.XMLHTTPREQUEST]
+        }
+      }
+    ]
+  });
+
+  try {
+    return await callback();
+  } finally {
+    await chrome.declarativeNetRequest.updateSessionRules({
+      removeRuleIds: [allSaintsCrawlerRuleId]
+    });
   }
 }
 

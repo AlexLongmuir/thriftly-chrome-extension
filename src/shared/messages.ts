@@ -18,7 +18,76 @@ export type PageSnapshot = {
   title: string;
   visibleText: string;
   meta: Record<string, string>;
+  jsonLd: unknown[];
+  hydration: EvidenceSnippet[];
+  targetedText: EvidenceSnippet[];
+  product: ProductExtraction;
   capturedAt: string;
+};
+
+export type PageState =
+  | "product_page"
+  | "not_product_page"
+  | "blocked_or_unavailable"
+  | "error_page"
+  | "site_failover"
+  | "thin_page"
+  | "unsupported_page";
+
+export type SourceMethod =
+  | "json_ld"
+  | "meta_tags"
+  | "hydration_blob"
+  | "dom_targeted"
+  | "visible_text_fallback"
+  | "mixed";
+
+export type ProductFieldName =
+  | "title"
+  | "brand"
+  | "price"
+  | "currency"
+  | "colour"
+  | "description"
+  | "materials"
+  | "care"
+  | "construction"
+  | "origin"
+  | "sizing"
+  | "categoryBreadcrumbs";
+
+export type EvidenceSource =
+  | "json_ld"
+  | "meta_tags"
+  | "hydration_blob"
+  | "dom_targeted"
+  | "visible_text_fallback"
+  | "image_extraction";
+
+export type EvidenceSnippet = {
+  source: EvidenceSource;
+  label: string;
+  text: string;
+};
+
+export type ExtractedField = {
+  value: string | string[] | null;
+  confidence: number;
+  source: EvidenceSource | null;
+  evidence: string[];
+};
+
+export type ProductExtraction = {
+  pageState: PageState;
+  page_state: PageState;
+  sourceMethod: SourceMethod;
+  source_method: SourceMethod;
+  sourceConfidenceScore: number;
+  source_confidence_score: number;
+  fields: Record<ProductFieldName, ExtractedField>;
+  imageUrls: string[];
+  image_urls: string[];
+  warnings: string[];
 };
 
 export type ActiveTabExtraction = {
@@ -38,7 +107,7 @@ export type BackendVerdict = {
 export type BackendPayload = {
   page: PageSnapshot;
   extension: {
-    stage: "stage_1";
+    stage: "stage_2";
     version: string;
   };
 };

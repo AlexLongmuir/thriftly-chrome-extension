@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { submitQualityCheck } from "../api/client";
-import type { ActiveTabExtraction, BackendVerdict } from "../shared/messages";
+import type { ActiveTabExtraction, BackendVerdict, ProductFieldName } from "../shared/messages";
 import { createBackendPayload } from "../shared/pageSnapshot";
 import { requestActiveTabExtraction } from "./chromeApi";
 
@@ -14,8 +14,8 @@ export function App() {
 
   const statusLabel = useMemo(() => {
     if (status === "extracting") return "Reading active tab";
-    if (status === "sending") return "Sending test payload";
-    if (status === "complete") return "Stage 1 connected";
+    if (status === "sending") return "Sending extraction payload";
+    if (status === "complete") return "Stage 2 extracted";
     if (status === "error") return "Needs attention";
     return "Ready";
   }, [status]);
@@ -52,8 +52,8 @@ export function App() {
 
       <section className="primary-panel">
         <p className="panel-copy">
-          Stage 1 verifies the extension shell: side panel, active-tab messaging, content-script capture,
-          backend payload submission, and response rendering.
+          Extract product evidence from the active tab, prioritising structured page data before targeted DOM
+          text and visible-text fallback.
         </p>
         <button className="primary-button" type="button" onClick={handleRunCheck} disabled={status === "extracting" || status === "sending"}>
           {status === "extracting" || status === "sending" ? "Checking..." : "Run page check"}
@@ -69,23 +69,44 @@ export function App() {
 
       {extraction ? (
         <section className="message-block">
-          <h2>Active tab payload</h2>
+          <h2>Extracted evidence</h2>
           <dl className="details-list">
             <div>
-              <dt>Title</dt>
-              <dd>{extraction.snapshot.title || "No title captured"}</dd>
+              <dt>Page state</dt>
+              <dd>{extraction.snapshot.product.pageState}</dd>
+            </div>
+            <div>
+              <dt>Source method</dt>
+              <dd>
+                {extraction.snapshot.product.sourceMethod} · confidence{" "}
+                {extraction.snapshot.product.sourceConfidenceScore.toFixed(2)}
+              </dd>
+            </div>
+            {FIELD_ROWS.map((field) => (
+              <div key={field}>
+                <dt>{FIELD_LABELS[field]}</dt>
+                <dd>
+                  {formatFieldValue(extraction.snapshot.product.fields[field].value)}
+                  {extraction.snapshot.product.fields[field].source ? (
+                    <span className="field-meta">
+                      {extraction.snapshot.product.fields[field].source} ·{" "}
+                      {extraction.snapshot.product.fields[field].confidence.toFixed(2)}
+                    </span>
+                  ) : null}
+                </dd>
+              </div>
+            ))}
+            <div>
+              <dt>Images</dt>
+              <dd>{extraction.snapshot.product.imageUrls.length}</dd>
             </div>
             <div>
               <dt>URL</dt>
               <dd>{extraction.snapshot.url}</dd>
             </div>
             <div>
-              <dt>Visible text</dt>
-              <dd>{extraction.snapshot.visibleText ? `${extraction.snapshot.visibleText.length} characters captured` : "None captured"}</dd>
-            </div>
-            <div>
-              <dt>Meta tags</dt>
-              <dd>{Object.keys(extraction.snapshot.meta).length}</dd>
+              <dt>Warnings</dt>
+              <dd>{extraction.snapshot.product.warnings.length ? extraction.snapshot.product.warnings.join("; ") : "None"}</dd>
             </div>
           </dl>
         </section>
@@ -109,4 +130,39 @@ export function App() {
       ) : null}
     </main>
   );
+}
+
+const FIELD_ROWS: ProductFieldName[] = [
+  "title",
+  "brand",
+  "price",
+  "currency",
+  "colour",
+  "description",
+  "materials",
+  "care",
+  "construction",
+  "origin",
+  "sizing",
+  "categoryBreadcrumbs"
+];
+
+const FIELD_LABELS: Record<ProductFieldName, string> = {
+  title: "Product title",
+  brand: "Brand",
+  price: "Price",
+  currency: "Currency",
+  colour: "Colour",
+  description: "Description",
+  materials: "Materials",
+  care: "Care",
+  construction: "Construction",
+  origin: "Origin",
+  sizing: "Sizing",
+  categoryBreadcrumbs: "Category"
+};
+
+function formatFieldValue(value: string | string[] | null): string {
+  if (Array.isArray(value)) return value.length ? value.join(" › ") : "Not found";
+  return value || "Not found";
 }
