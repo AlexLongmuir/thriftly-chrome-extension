@@ -12,11 +12,6 @@ import type {
   VisualScoreDimension,
   VisualScoreEffect
 } from "../src/shared/messages";
-import {
-  sanitiseExpertVisualInferences,
-  sanitiseVisualCues,
-  sanitiseVisualObservations
-} from "../src/shared/visualEnrichment";
 
 const MAX_IMAGES = 4;
 const MAX_IMAGE_BYTES = 4_000_000;
@@ -25,6 +20,11 @@ const DEFAULT_VISION_MODEL = "gemini-3.0-flash";
 const DEFAULT_CORE_MODEL = "gpt-5.4-mini";
 const DEFAULT_PREMIUM_FALLBACK_MODEL = "gpt-5.4";
 const DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small";
+const FORBIDDEN_STRONG_VISUAL_CLAIM_PATTERN =
+  /\b(?:made from|made of|is genuine|are genuine|authentic|real leather|full[- ]grain|top[- ]grain|100%\s+|pure\s+(?:wool|cotton|linen|leather|silk)|will last|long[- ]term durable|welted construction|goodyear welted|fabric quality is|construction is (?:excellent|poor|high quality|low quality)|(?:is|are) (?:genuine|authentic|real|pure|durable|high quality|low quality|wool|cotton|linen|leather|silk))\b/i;
+const UNQUALIFIED_VISUAL_QUALITY_PATTERN =
+  /\b(?:high quality|low quality|poor quality|excellent quality|cheaply made|well made|durable|not durable|stitched|welted|bonded|genuine|authentic|full[- ]grain|top[- ]grain)\b/i;
+
 type Env = Record<string, string | undefined>;
 
 type QualityCheckEnv = {
@@ -396,6 +396,109 @@ function toExpertVisualInference(value: unknown): ExpertVisualInference | null {
   };
 }
 
+function sanitiseVisualObservations(observations: VisualObservation[]): {
+  observations: VisualObservation[];
+  warnings: string[];
+} {
+  const warnings: string[] = [];
+  const cleanObservations: VisualObservation[] = [];
+
+  for (const observation of observations) {
+    const text = observation.observation.trim();
+    if (!text) continue;
+
+    const makesForbiddenClaim = FORBIDDEN_STRONG_VISUAL_CLAIM_PATTERN.test(text);
+    cleanObservations.push({
+      ...observation,
+      observation: makesForbiddenClaim
+        ? "Image-only claim removed because it asserted fabric quality, construction, authenticity, or durability."
+        : text.slice(0, 240),
+      confidence: makesForbiddenClaim ? "low" : observation.confidence,
+      should_affect_score: makesForbiddenClaim ? false : observation.should_affect_score
+    });
+
+    if (makesForbiddenClaim) {
+      warnings.push("visual observation downgraded: image-only claim exceeded Stage 5 limits");
+    }
+  }
+
+  return {
+    observations: cleanObservations.slice(0, 8),
+    warnings
+  };
+}
+
+function sanitiseVisualCues(cues: VisualCue[]): {
+  visual_cues: VisualCue[];
+  warnings: string[];
+} {
+  const warnings: string[] = [];
+  const cleanCues: VisualCue[] = [];
+
+  for (const cue of cues) {
+    const text = cue.cue.trim();
+    if (!text) continue;
+
+    const makesForbiddenClaim = FORBIDDEN_STRONG_VISUAL_CLAIM_PATTERN.test(text);
+    cleanCues.push({
+      cue: makesForbiddenClaim ? "Image-only cue removed because it asserted a non-visual product fact." : text.slice(0, 260),
+      evidence_type: cue.evidence_type,
+      confidence: makesForbiddenClaim ? "low" : cue.confidence,
+      image_limitations: uniqueStrings(cue.image_limitations).slice(0, 4)
+    });
+
+    if (makesForbiddenClaim) {
+      warnings.push("visual cue downgraded: image-only cue exceeded Stage 5 limits");
+    }
+  }
+
+  return {
+    visual_cues: cleanCues.slice(0, 8),
+    warnings
+  };
+}
+
+function sanitiseExpertVisualInferences(inferences: ExpertVisualInference[]): {
+  expert_inferences: ExpertVisualInference[];
+  warnings: string[];
+} {
+  const warnings: string[] = [];
+  const cleanInferences: ExpertVisualInference[] = [];
+
+  for (const inference of inferences) {
+    const text = inference.inference.trim();
+    const whyItMatters = inference.why_it_matters.trim();
+    const caveat = inference.caveat.trim();
+    if (!text || !whyItMatters || !caveat) continue;
+
+    const makesForbiddenClaim = FORBIDDEN_STRONG_VISUAL_CLAIM_PATTERN.test(text) && !hasUncertaintyLanguage(text);
+    const isUnqualified = UNQUALIFIED_VISUAL_QUALITY_PATTERN.test(text) && !hasUncertaintyLanguage(text);
+    const shouldDowngrade = makesForbiddenClaim || isUnqualified;
+
+    cleanInferences.push({
+      inference: shouldDowngrade
+        ? "Image-only inference removed because it asserted quality, construction, authenticity, or durability without uncertainty."
+        : text.slice(0, 280),
+      quality_dimension: inference.quality_dimension,
+      confidence: shouldDowngrade ? "low" : inference.confidence,
+      basis: "inferred_from_image",
+      why_it_matters: whyItMatters.slice(0, 220),
+      caveat: caveat.slice(0, 180),
+      score_dimension: inference.score_dimension,
+      score_effect: shouldDowngrade ? "none" : capScoreEffect(inference.score_effect, inference.confidence)
+    });
+
+    if (shouldDowngrade) {
+      warnings.push("expert visual inference downgraded: image-only claim lacked uncertainty");
+    }
+  }
+
+  return {
+    expert_inferences: cleanInferences.slice(0, 6),
+    warnings
+  };
+}
+
 function isConfidence(value: unknown): value is VisualObservationConfidence {
   return value === "high" || value === "medium" || value === "low";
 }
@@ -434,6 +537,17 @@ function isScoreEffect(value: unknown): value is VisualScoreEffect {
     value === "medium_positive" ||
     value === "medium_negative"
   );
+}
+
+function hasUncertaintyLanguage(value: string): boolean {
+  return /\b(?:appears?|looks?|suggests?|may|might|could|can be consistent with|possibly|likely|seems|visible cue|from the image|not enough|cannot verify)\b/i.test(value);
+}
+
+function capScoreEffect(effect: VisualScoreEffect, confidence: ExpertVisualInference["confidence"]): VisualScoreEffect {
+  if (confidence === "low" && (effect === "medium_positive" || effect === "medium_negative")) {
+    return effect === "medium_positive" ? "small_positive" : "small_negative";
+  }
+  return effect;
 }
 
 function toStringArray(value: unknown): string[] {
