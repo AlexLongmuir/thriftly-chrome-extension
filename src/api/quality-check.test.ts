@@ -183,6 +183,123 @@ describe("quality-check API", () => {
     expect(result.analysis?.visual_enrichment.image_quality_limits).toEqual(["studio lighting may exaggerate sheen"]);
   });
 
+  it("neutralises weak positive high-street blazer image claims", async () => {
+    const payload = createPayload({ imageUrls: ["https://cdn.example.com/next-blazer.png"] });
+    payload.classification.category = "outerwear";
+    payload.classification.brand = "Next";
+    payload.classification.brand_tier = "high-street";
+    payload.classification.material_family = "blend";
+    payload.classification.price = "£60";
+
+    const result = await handleQualityCheckPayload(payload, {
+      env: testEnv(),
+      requestId: () => "request-next-blazer",
+      fetcher: async (input) => {
+        const url = String(input);
+        if (url.startsWith("https://generativelanguage.googleapis.com/")) {
+          return Response.json({
+            candidates: [
+              {
+                content: {
+                  parts: [
+                    {
+                      text: JSON.stringify({
+                        expert_inferences: [
+                          {
+                            inference:
+                              "The clean, crisp edges of the lapels and pocket flaps, along with the absence of visible puckering, suggest a good standard of construction finish for a high-street brand.",
+                            quality_dimension: "construction_finish",
+                            confidence: "medium",
+                            basis: "inferred_from_image",
+                            why_it_matters:
+                              "Indicates attention to detail in manufacturing, contributing to the garment's overall perceived quality and aesthetic.",
+                            caveat: "Based on product images only.",
+                            score_dimension: "quality",
+                            score_effect: "small_positive"
+                          },
+                          {
+                            inference:
+                              "The contrasting blue floral lining adds a distinct aesthetic refinement and suggests a thoughtful design choice, elevating the garment's visual appeal beyond a basic lining.",
+                            quality_dimension: "aesthetic_refinement",
+                            confidence: "high",
+                            basis: "inferred_from_image",
+                            why_it_matters:
+                              "Enhances the perceived value and style, appealing to a buyer looking for unique details.",
+                            caveat: "Based on product images only.",
+                            score_dimension: "aesthetic",
+                            score_effect: "medium_positive"
+                          },
+                          {
+                            inference:
+                              "The visible fabric texture and matte finish are consistent with a blend material, which may offer a balance of durability and comfort, typical for high-street outerwear.",
+                            quality_dimension: "material_finish",
+                            confidence: "medium",
+                            basis: "inferred_from_image",
+                            why_it_matters:
+                              "Suggests the material choice aligns with the product category and brand tier, potentially offering practical benefits.",
+                            caveat: "Based on product images only.",
+                            score_dimension: "durability",
+                            score_effect: "small_positive"
+                          },
+                          {
+                            inference:
+                              "The appearance of standard, functional buttons on the front and cuffs suggests a practical approach to hardware, consistent with a high-street brand tier.",
+                            quality_dimension: "hardware_trim",
+                            confidence: "medium",
+                            basis: "inferred_from_image",
+                            why_it_matters:
+                              "Functional hardware is essential for garment utility; its appearance contributes to the overall finish.",
+                            caveat: "Based on product images only.",
+                            score_dimension: "quality",
+                            score_effect: "small_positive"
+                          }
+                        ]
+                      })
+                    }
+                  ]
+                }
+              }
+            ]
+          });
+        }
+
+        return new Response(new Uint8Array([1, 2, 3]), {
+          headers: { "content-type": "image/png" }
+        });
+      }
+    });
+
+    expect(result.analysis?.visual_enrichment.expert_inferences).toEqual([
+      expect.objectContaining({
+        inference:
+          "Clean pressed edges or an absence of visible defects in studio product images are neutral; they do not establish construction quality without close-up seam, lining, or stitching evidence.",
+        confidence: "low",
+        score_effect: "none"
+      }),
+      expect.objectContaining({
+        inference:
+          "Visible lining, trim, buttons, or styling details are aesthetic cues only; they do not establish better construction, durability, or value from images alone.",
+        confidence: "low",
+        score_effect: "none"
+      }),
+      expect.objectContaining({
+        inference:
+          "Generic fabric texture or matte finish in a product image is not enough evidence to infer comfort, durability, or practical material benefits.",
+        confidence: "low",
+        score_effect: "none"
+      }),
+      expect.objectContaining({
+        inference:
+          "Clean pressed edges or an absence of visible defects in studio product images are neutral; they do not establish construction quality without close-up seam, lining, or stitching evidence.",
+        confidence: "low",
+        score_effect: "none"
+      })
+    ]);
+    expect(result.analysis?.visual_enrichment.warnings).toContain(
+      "expert visual inference neutralised: weak positive image cue is not reliable evidence"
+    );
+  });
+
   it("returns a stable structured backend response", async () => {
     const result = await handleQualityCheckPayload(createPayload({ imageUrls: ["https://cdn.example.com/product.png"] }), {
       env: testEnv({

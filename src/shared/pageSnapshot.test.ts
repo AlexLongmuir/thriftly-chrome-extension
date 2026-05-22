@@ -946,6 +946,8 @@ describe("page snapshot helpers", () => {
     expect(payload.visual_enrichment.prompt).toContain("Forbidden as hard claims");
     expect(payload.visual_enrichment.prompt).toContain("experienced personal shopper");
     expect(payload.visual_enrichment.prompt).toContain("expert_inferences");
+    expect(payload.visual_enrichment.prompt).toContain("Absence of visible defects");
+    expect(payload.visual_enrichment.prompt).toContain("Styling details");
   });
 
   it("skips Stage 5 visual enrichment when product images are missing", () => {

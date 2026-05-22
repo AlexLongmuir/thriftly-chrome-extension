@@ -24,6 +24,12 @@ const FORBIDDEN_STRONG_VISUAL_CLAIM_PATTERN =
   /\b(?:made from|made of|is genuine|are genuine|authentic|real leather|full[- ]grain|top[- ]grain|100%\s+|pure\s+(?:wool|cotton|linen|leather|silk)|will last|long[- ]term durable|welted construction|goodyear welted|fabric quality is|construction is (?:excellent|poor|high quality|low quality)|(?:is|are) (?:genuine|authentic|real|pure|durable|high quality|low quality|wool|cotton|linen|leather|silk))\b/i;
 const UNQUALIFIED_VISUAL_QUALITY_PATTERN =
   /\b(?:high quality|low quality|poor quality|excellent quality|cheaply made|well made|durable|not durable|stitched|welted|bonded|genuine|authentic|full[- ]grain|top[- ]grain)\b/i;
+const WEAK_POSITIVE_VISUAL_CONSTRUCTION_PATTERN =
+  /\b(?:clean|crisp|neat|sharp|smooth|absence of|no visible|without visible|standard|functional|typical|consistent with).{0,80}\b(?:lapels?|edges?|pocket flaps?|puckering|buttons?|cuffs?|construction finish|standard of construction|hardware)\b/i;
+const STYLING_AS_VISUAL_QUALITY_PATTERN =
+  /\b(?:lining|contrast(?:ing)? lining|floral lining|buttons?|trim|design choice).{0,180}\b(?:elevat\w*|perceived value|quality|construction|well made|premium|attention to detail)\b/i;
+const MATERIAL_BENEFIT_FROM_VISUAL_APPEARANCE_PATTERN =
+  /\b(?:visible fabric texture|matte finish|surface appearance|appearance).{0,120}\b(?:durability|comfort|practical benefits|material choice aligns|blend material)\b/i;
 
 type Env = Record<string, string | undefined>;
 
@@ -473,23 +479,27 @@ function sanitiseExpertVisualInferences(inferences: ExpertVisualInference[]): {
 
     const makesForbiddenClaim = FORBIDDEN_STRONG_VISUAL_CLAIM_PATTERN.test(text) && !hasUncertaintyLanguage(text);
     const isUnqualified = UNQUALIFIED_VISUAL_QUALITY_PATTERN.test(text) && !hasUncertaintyLanguage(text);
+    const weakPositive = weakPositiveVisualInference(text, inference);
     const shouldDowngrade = makesForbiddenClaim || isUnqualified;
+    const neutralisedInference = neutraliseWeakPositiveInference(text, inference);
 
     cleanInferences.push({
       inference: shouldDowngrade
         ? "Image-only inference removed because it asserted quality, construction, authenticity, or durability without uncertainty."
-        : text.slice(0, 280),
+        : neutralisedInference || text.slice(0, 280),
       quality_dimension: inference.quality_dimension,
-      confidence: shouldDowngrade ? "low" : inference.confidence,
+      confidence: shouldDowngrade || weakPositive ? "low" : inference.confidence,
       basis: "inferred_from_image",
       why_it_matters: whyItMatters.slice(0, 220),
       caveat: caveat.slice(0, 180),
       score_dimension: inference.score_dimension,
-      score_effect: shouldDowngrade ? "none" : capScoreEffect(inference.score_effect, inference.confidence)
+      score_effect: shouldDowngrade || weakPositive ? "none" : capScoreEffect(inference.score_effect, inference.confidence)
     });
 
     if (shouldDowngrade) {
       warnings.push("expert visual inference downgraded: image-only claim lacked uncertainty");
+    } else if (weakPositive) {
+      warnings.push("expert visual inference neutralised: weak positive image cue is not reliable evidence");
     }
   }
 
@@ -543,6 +553,26 @@ function hasUncertaintyLanguage(value: string): boolean {
   return /\b(?:appears?|looks?|suggests?|may|might|could|can be consistent with|possibly|likely|seems|visible cue|from the image|not enough|cannot verify)\b/i.test(value);
 }
 
+function weakPositiveVisualInference(value: string, inference: ExpertVisualInference): boolean {
+  if (inference.score_effect !== "small_positive" && inference.score_effect !== "medium_positive") return false;
+  return (
+    WEAK_POSITIVE_VISUAL_CONSTRUCTION_PATTERN.test(value) ||
+    STYLING_AS_VISUAL_QUALITY_PATTERN.test(value) ||
+    MATERIAL_BENEFIT_FROM_VISUAL_APPEARANCE_PATTERN.test(value)
+  );
+}
+
+function neutraliseWeakPositiveInference(value: string, inference: ExpertVisualInference): string | null {
+  if (!weakPositiveVisualInference(value, inference)) return null;
+  if (STYLING_AS_VISUAL_QUALITY_PATTERN.test(value)) {
+    return "Visible lining, trim, buttons, or styling details are aesthetic cues only; they do not establish better construction, durability, or value from images alone.";
+  }
+  if (MATERIAL_BENEFIT_FROM_VISUAL_APPEARANCE_PATTERN.test(value)) {
+    return "Generic fabric texture or matte finish in a product image is not enough evidence to infer comfort, durability, or practical material benefits.";
+  }
+  return "Clean pressed edges or an absence of visible defects in studio product images are neutral; they do not establish construction quality without close-up seam, lining, or stitching evidence.";
+}
+
 function capScoreEffect(effect: VisualScoreEffect, confidence: ExpertVisualInference["confidence"]): VisualScoreEffect {
   if (confidence === "low" && (effect === "medium_positive" || effect === "medium_negative")) {
     return effect === "medium_positive" ? "small_positive" : "small_negative";
@@ -570,6 +600,8 @@ function buildFallbackPrompt(): string {
     "Return strict JSON with visual_observations only.",
     "Also include visual_cues, expert_inferences, missing_views, and image_quality_limits.",
     "Prefer diagnostic shopper cues with caveats over obvious captions.",
+    "Be sceptical: clean studio photos and absence of visible defects are neutral, not evidence of good construction.",
+    "Styling details such as lining, trim, and standard buttons are aesthetic only; do not use them to imply construction quality, durability, or value.",
     "Allowed: colour, silhouette, texture appearance, fit/proportion cues, surface details, aesthetic cues, visible finishing cues.",
     "Forbidden as hard claims from images alone: fabric quality, exact construction, authenticity, durability."
   ].join("\n");
