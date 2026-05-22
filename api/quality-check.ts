@@ -598,8 +598,9 @@ function parseModelJson(text: string): Record<string, unknown> {
 function buildFallbackPrompt(): string {
   return [
     "Return strict JSON with visual_observations only.",
-    "Also include visual_cues, expert_inferences, missing_views, and image_quality_limits.",
-    "Prefer diagnostic shopper cues with caveats over obvious captions.",
+    "Also include visual_cues, missing_views, image_quality_limits, and expert_inferences as an empty array.",
+    "Temporarily do not generate expert inferences or shopper judgements.",
+    "Prefer concrete visual cues over obvious captions.",
     "Be sceptical: clean studio photos and absence of visible defects are neutral, not evidence of good construction.",
     "Styling details such as lining, trim, and standard buttons are aesthetic only; do not use them to imply construction quality, durability, or value.",
     "Allowed: colour, silhouette, texture appearance, fit/proportion cues, surface details, aesthetic cues, visible finishing cues.",

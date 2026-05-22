@@ -183,13 +183,6 @@ export function App() {
                 <Metric label="Observations" value={String(verdict.analysis.visual_enrichment.observations.length)} />
               </div>
               <ClassificationList
-                title="Expert visual inferences"
-                items={verdict.analysis.visual_enrichment.expert_inferences.map((inference) =>
-                  `${inference.inference} Why it matters: ${inference.why_it_matters} (${inference.confidence}, ${inference.score_effect})`
-                )}
-                emptyLabel="None"
-              />
-              <ClassificationList
                 title="Diagnostic visual cues"
                 items={verdict.analysis.visual_enrichment.visual_cues.map((cue) =>
                   `${cue.cue} (${cue.confidence}, ${cue.evidence_type})`

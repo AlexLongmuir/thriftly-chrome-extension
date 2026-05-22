@@ -209,9 +209,9 @@ function buildVisualEnrichmentPrompt(classification: ProductClassification): str
   return [
     "You are doing Stage 5 visual enrichment for a clothing quality-checking Chrome extension.",
     "Use the supplied product images only for visual enrichment. Return strict JSON.",
-    "Do not merely caption the image. Prioritise diagnostic cues an experienced personal shopper, tailor, cobbler, or buyer would notice.",
+    "Temporarily do not generate expert_inferences or shopper judgements. Leave expert_inferences as an empty array.",
+    "Prioritise concrete visual cues over captions, but do not interpret those cues as quality, value, comfort, or durability.",
     "Allowed visual cues: colour, silhouette, texture appearance, fit/proportion, seam or edge neatness, visible hardware/trim, surface finish, drape, fabric density appearance, pilling/fuzz, transparency, puckering, glue marks, loose threads, and aesthetic refinement.",
-    "Expert inferences are allowed only when phrased as possible/consistent with/suggests/may indicate, with a caveat. Prefer useful low-confidence inference over bland captioning.",
     "Use a sceptical retail-quality prior: high-street and budget products are usually mass-produced and cost-constrained. Do not reward them for looking acceptable in studio photos.",
     "Absence of visible defects in product images is not positive construction evidence. Clean lapels, crisp pocket flaps, pressed edges, or no visible puckering should be neutral unless there is a close-up showing seams, edge finishing, lining attachment, or stitching.",
     "Styling details such as contrast lining, print lining, buttons, or trim may be aesthetic cues only. They must not imply better construction, durability, or value.",
@@ -220,12 +220,8 @@ function buildVisualEnrichmentPrompt(classification: ProductClassification): str
     "Forbidden as hard claims from images alone: true fibre content, fabric authenticity, exact leather grade, exact construction method, long-term durability, or guaranteed build quality.",
     "Do allow visible construction-finish cues such as stitch regularity, seam puckering, edge finishing, glue marks, lining visibility, or hardware appearance.",
     `Category checklist: ${categoryChecklist(classification.category, classification.material_family)}`,
-    "Return: visual_cues, expert_inferences, missing_views, image_quality_limits, and legacy visual_observations.",
+    "Return: visual_cues, missing_views, image_quality_limits, legacy visual_observations, and expert_inferences as [].",
     "visual_cues items: cue, evidence_type, confidence, image_limitations.",
-    "expert_inferences items: inference, quality_dimension, confidence, basis='inferred_from_image', why_it_matters, caveat, score_dimension, score_effect.",
-    "Allowed quality_dimension: material_finish, construction_finish, hardware_trim, fit_drape, surface_wear, aesthetic_refinement.",
-    "Allowed score_dimension: quality, durability, aesthetic, confidence. Allowed score_effect: none, small_positive, small_negative, medium_positive, medium_negative.",
-    "Use medium score effects only for clearly visible cues; low confidence inferences should normally be small or none.",
     `Known non-visual product context: category=${classification.category}; material_family=${classification.material_family}; brand_tier=${classification.brand_tier}; source_confidence=${classification.source_confidence_label}.`,
     "Each legacy visual_observations item must include observation, confidence high|medium|low, evidence_type, and should_affect_score."
   ].join("\n");

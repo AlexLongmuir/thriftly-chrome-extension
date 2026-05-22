@@ -944,8 +944,8 @@ describe("page snapshot helpers", () => {
       "https://example.com/product-alt.jpg"
     ]);
     expect(payload.visual_enrichment.prompt).toContain("Forbidden as hard claims");
-    expect(payload.visual_enrichment.prompt).toContain("experienced personal shopper");
-    expect(payload.visual_enrichment.prompt).toContain("expert_inferences");
+    expect(payload.visual_enrichment.prompt).toContain("do not generate expert_inferences");
+    expect(payload.visual_enrichment.prompt).toContain("expert_inferences as []");
     expect(payload.visual_enrichment.prompt).toContain("Absence of visible defects");
     expect(payload.visual_enrichment.prompt).toContain("Styling details");
   });
