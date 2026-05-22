@@ -13,6 +13,7 @@ import {
   normaliseWhitespace
 } from "./pageSnapshot";
 import { createPageSnapshotWithRetailerFallbacks } from "./retailerFallbacks";
+import { createVisualEnrichment, sanitiseExpertVisualInferences, sanitiseVisualObservations } from "./visualEnrichment";
 
 describe("page snapshot helpers", () => {
   it("normalises whitespace", () => {
@@ -907,12 +908,20 @@ describe("page snapshot helpers", () => {
     expect(activeClassification.style_tags).toContain("active");
   });
 
-  it("creates a bounded stage 4 backend payload", () => {
+  it("creates a bounded stage 5 backend payload with visual enrichment request metadata", () => {
     const dom = new JSDOM(
       `
         <!doctype html>
         <title> Test Product </title>
-        <body>${"Visible text ".repeat(1000)}</body>
+        <meta property="og:image" content="/product.jpg">
+        <body>
+          <main>
+            <h1>Test Product</h1>
+            <p>£39</p>
+            <img src="/product-alt.jpg" width="900" height="1200" alt="Test Product">
+          </main>
+          ${"Visible text ".repeat(1000)}
+        </body>
       `,
       { url: "https://example.com/products/test" }
     );
@@ -923,10 +932,100 @@ describe("page snapshot helpers", () => {
     expect(snapshot.url).toBe("https://example.com/products/test");
     expect(snapshot.title).toBe("Test Product");
     expect(snapshot.visibleText.length).toBeLessThanOrEqual(7000);
-    expect(payload.extension.stage).toBe("stage_4");
-    expect(payload.extension.version).toBe("0.4.0");
+    expect(payload.extension.stage).toBe("stage_5");
+    expect(payload.extension.version).toBe("0.5.0");
     expect(payload.page).toBe(snapshot);
     expect(payload.classification.source_confidence_label).toBe("low");
+    expect(payload.visual_enrichment.status).toBe("requested");
+    expect(payload.visual_enrichment.model).toBe("gemini-3.0-flash");
+    expect(payload.visual_enrichment.fallback_model).toBe("gpt-5.4");
+    expect(payload.visual_enrichment.image_urls).toEqual([
+      "https://example.com/product.jpg",
+      "https://example.com/product-alt.jpg"
+    ]);
+    expect(payload.visual_enrichment.prompt).toContain("Forbidden as hard claims");
+    expect(payload.visual_enrichment.prompt).toContain("experienced personal shopper");
+    expect(payload.visual_enrichment.prompt).toContain("expert_inferences");
+  });
+
+  it("skips Stage 5 visual enrichment when product images are missing", () => {
+    const dom = new JSDOM(
+      `
+        <!doctype html>
+        <title>Plain Cotton Shirt</title>
+        <body><main><h1>Plain Cotton Shirt</h1><p>£39.50</p></main></body>
+      `,
+      { url: "https://shop.example/products/plain-cotton-shirt" }
+    );
+    const snapshot = createPageSnapshot(dom.window.document, dom.window.location);
+    const classification = classifyProductEvidence(snapshot.product);
+    const visual = createVisualEnrichment(snapshot.product, classification);
+
+    expect(visual.status).toBe("skipped");
+    expect(visual.prompt).toBeNull();
+    expect(visual.warnings).toContain("visual enrichment skipped: product images not found");
+  });
+
+  it("sanitises Stage 5 observations so image-only claims cannot affect scores strongly", () => {
+    const result = sanitiseVisualObservations([
+      {
+        observation: "Fine-gauge texture visible in product image",
+        confidence: "medium",
+        evidence_type: "texture_appearance",
+        should_affect_score: true
+      },
+      {
+        observation: "The leather is genuine, durable and high quality",
+        confidence: "high",
+        evidence_type: "surface_detail",
+        should_affect_score: true
+      }
+    ]);
+
+    expect(result.observations[0]).toMatchObject({
+      confidence: "medium",
+      should_affect_score: true
+    });
+    expect(result.observations[1]).toMatchObject({
+      confidence: "low",
+      should_affect_score: false
+    });
+    expect(result.warnings).toContain("visual observation downgraded: image-only claim exceeded Stage 5 limits");
+  });
+
+  it("keeps useful but caveated expert visual inference while capping low-confidence score effects", () => {
+    const result = sanitiseExpertVisualInferences([
+      {
+        inference: "The surface appearance may indicate a coated or heavily finished leather surface.",
+        quality_dimension: "material_finish",
+        confidence: "low",
+        basis: "inferred_from_image",
+        why_it_matters: "Heavier surface finishing can affect how leather patinates.",
+        caveat: "Cannot verify leather grade from image alone.",
+        score_dimension: "quality",
+        score_effect: "medium_negative"
+      },
+      {
+        inference: "The jacket is high quality and durable.",
+        quality_dimension: "construction_finish",
+        confidence: "high",
+        basis: "inferred_from_image",
+        why_it_matters: "Construction affects lifespan.",
+        caveat: "No caveat.",
+        score_dimension: "durability",
+        score_effect: "medium_positive"
+      }
+    ]);
+
+    expect(result.expert_inferences[0]).toMatchObject({
+      confidence: "low",
+      score_effect: "small_negative"
+    });
+    expect(result.expert_inferences[1]).toMatchObject({
+      inference: "Image-only inference removed because it asserted quality, construction, authenticity, or durability without uncertainty.",
+      confidence: "low",
+      score_effect: "none"
+    });
   });
 
   it("collects JSON-LD and image URLs from multiple source types", () => {

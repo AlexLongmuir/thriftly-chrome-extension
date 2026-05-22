@@ -114,7 +114,14 @@ export type SourceConfidenceLabel = "high" | "medium" | "low";
 export type LabelledInference = {
   field: keyof ProductClassification;
   value: string;
-  basis: "stated_on_page" | "inferred_from_title" | "inferred_from_category" | "inferred_from_material" | "inferred_from_brand" | "unknown";
+  basis:
+    | "stated_on_page"
+    | "inferred_from_title"
+    | "inferred_from_category"
+    | "inferred_from_material"
+    | "inferred_from_brand"
+    | "inferred_from_image"
+    | "unknown";
 };
 
 export type ProductClassification = {
@@ -135,6 +142,74 @@ export type ProductClassification = {
   labelled_inferences: LabelledInference[];
 };
 
+export type VisualObservationConfidence = "high" | "medium" | "low";
+
+export type VisualObservationEvidenceType =
+  | "colour"
+  | "silhouette"
+  | "texture_appearance"
+  | "fit_proportion"
+  | "surface_detail"
+  | "aesthetic_cue";
+
+export type VisualObservation = {
+  observation: string;
+  confidence: VisualObservationConfidence;
+  evidence_type: VisualObservationEvidenceType;
+  should_affect_score: boolean;
+};
+
+export type VisualQualityDimension =
+  | "material_finish"
+  | "construction_finish"
+  | "hardware_trim"
+  | "fit_drape"
+  | "surface_wear"
+  | "aesthetic_refinement";
+
+export type VisualScoreDimension = "quality" | "durability" | "aesthetic" | "confidence";
+
+export type VisualScoreEffect =
+  | "none"
+  | "small_positive"
+  | "small_negative"
+  | "medium_positive"
+  | "medium_negative";
+
+export type VisualCue = {
+  cue: string;
+  evidence_type: VisualObservationEvidenceType;
+  confidence: VisualObservationConfidence;
+  image_limitations: string[];
+};
+
+export type ExpertVisualInference = {
+  inference: string;
+  quality_dimension: VisualQualityDimension;
+  confidence: VisualObservationConfidence;
+  basis: "inferred_from_image";
+  why_it_matters: string;
+  caveat: string;
+  score_dimension: VisualScoreDimension;
+  score_effect: VisualScoreEffect;
+};
+
+export type VisualEnrichmentStatus = "requested" | "skipped";
+
+export type VisualEnrichment = {
+  status: VisualEnrichmentStatus;
+  model: string;
+  fallback_model: string;
+  image_urls: string[];
+  observations: VisualObservation[];
+  visual_cues: VisualCue[];
+  expert_inferences: ExpertVisualInference[];
+  missing_views: string[];
+  image_quality_limits: string[];
+  warnings: string[];
+  prompt: string | null;
+};
+
 export type ActiveTabExtraction = {
   tabId: number;
   tabUrl?: string;
@@ -147,14 +222,49 @@ export type BackendVerdict = {
   receivedUrl: string;
   source: "backend" | "mock";
   capturedTitle: string;
+  analysis?: BackendAnalysis;
 };
 
 export type BackendPayload = {
   page: PageSnapshot;
   classification: ProductClassification;
+  visual_enrichment: VisualEnrichment;
   extension: {
-    stage: "stage_4";
+    stage: "stage_5";
     version: string;
+  };
+};
+
+export type BackendVisualEnrichmentResult = {
+  status: "completed" | "skipped";
+  model: string;
+  image_count: number;
+  observations: VisualObservation[];
+  visual_cues: VisualCue[];
+  expert_inferences: ExpertVisualInference[];
+  missing_views: string[];
+  image_quality_limits: string[];
+  warnings: string[];
+};
+
+export type BackendAnalysis = {
+  stage: "stage_5";
+  status: "completed" | "skipped";
+  product: {
+    title: string;
+    url: string;
+    page_state: PageState;
+    source_confidence_score: number;
+    source_confidence_label: SourceConfidenceLabel;
+  };
+  classification: ProductClassification;
+  visual_enrichment: BackendVisualEnrichmentResult;
+  model_config: {
+    vision_model: string;
+    core_model: string;
+    premium_fallback_model: string;
+    embedding_model: string;
+    openai_configured: boolean;
   };
 };
 

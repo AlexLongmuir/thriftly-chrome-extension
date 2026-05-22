@@ -1,0 +1,425 @@
+import { describe, expect, it } from "vitest";
+import { handleQualityCheckPayload } from "../../api/quality-check";
+import type { BackendPayload, ProductFieldName } from "../shared/messages";
+
+describe("quality-check API", () => {
+  it("skips vision safely when product images are missing", async () => {
+    const calls: string[] = [];
+    const result = await handleQualityCheckPayload(createPayload({ imageUrls: [] }), {
+      env: testEnv(),
+      requestId: () => "request-no-images",
+      fetcher: async (input) => {
+        calls.push(String(input));
+        return new Response("{}");
+      }
+    });
+
+    expect(calls).toEqual([]);
+    expect(result).toMatchObject({
+      requestId: "request-no-images",
+      source: "backend",
+      analysis: {
+        status: "skipped",
+        visual_enrichment: {
+          status: "skipped",
+          image_count: 0,
+          observations: [],
+          warnings: expect.arrayContaining(["visual enrichment skipped: product images not found"])
+        }
+      }
+    });
+  });
+
+  it("prevents image-only model claims about fabric quality, construction, authenticity, or durability", async () => {
+    const result = await handleQualityCheckPayload(createPayload({ imageUrls: ["https://cdn.example.com/product.png"] }), {
+      env: testEnv(),
+      requestId: () => "request-forbidden-claims",
+      fetcher: async (input) => {
+        const url = String(input);
+        if (url.startsWith("https://generativelanguage.googleapis.com/")) {
+          return Response.json({
+            candidates: [
+              {
+                content: {
+                  parts: [
+                    {
+                      text: JSON.stringify({
+                        visual_observations: [
+                          {
+                            observation: "The leather is genuine, durable, high quality and welted construction is visible",
+                            confidence: "high",
+                            evidence_type: "surface_detail",
+                            should_affect_score: true
+                          }
+                        ],
+                        visual_cues: [
+                          {
+                            cue: "The leather is genuine full-grain leather",
+                            confidence: "high",
+                            evidence_type: "texture_appearance",
+                            image_limitations: []
+                          }
+                        ],
+                        expert_inferences: [
+                          {
+                            inference: "The jacket is high quality and durable",
+                            quality_dimension: "material_finish",
+                            confidence: "high",
+                            basis: "inferred_from_image",
+                            why_it_matters: "Material finish affects ageing.",
+                            caveat: "No caveat provided.",
+                            score_dimension: "quality",
+                            score_effect: "medium_positive"
+                          }
+                        ]
+                      })
+                    }
+                  ]
+                }
+              }
+            ]
+          });
+        }
+
+        return new Response(new Uint8Array([1, 2, 3]), {
+          headers: { "content-type": "image/png" }
+        });
+      }
+    });
+
+    const observation = result.analysis?.visual_enrichment.observations[0];
+    expect(observation).toEqual({
+      observation: "Image-only claim removed because it asserted fabric quality, construction, authenticity, or durability.",
+      confidence: "low",
+      evidence_type: "surface_detail",
+      should_affect_score: false
+    });
+    expect(result.analysis?.visual_enrichment.warnings).toContain(
+      "visual observation downgraded: image-only claim exceeded Stage 5 limits"
+    );
+    expect(result.analysis?.visual_enrichment.warnings).toContain(
+      "visual cue downgraded: image-only cue exceeded Stage 5 limits"
+    );
+    expect(result.analysis?.visual_enrichment.warnings).toContain(
+      "expert visual inference downgraded: image-only claim lacked uncertainty"
+    );
+  });
+
+  it("keeps cautious personal-shopper visual inferences with bounded score impact", async () => {
+    const result = await handleQualityCheckPayload(createPayload({ imageUrls: ["https://cdn.example.com/leather.png"] }), {
+      env: testEnv(),
+      requestId: () => "request-shopper-inference",
+      fetcher: async (input) => {
+        const url = String(input);
+        if (url.startsWith("https://generativelanguage.googleapis.com/")) {
+          return Response.json({
+            candidates: [
+              {
+                content: {
+                  parts: [
+                    {
+                      text: JSON.stringify({
+                        visual_cues: [
+                          {
+                            cue: "The surface appears very smooth and uniform with a slight plastic-like sheen.",
+                            confidence: "medium",
+                            evidence_type: "texture_appearance",
+                            image_limitations: ["studio lighting", "no macro close-up"]
+                          }
+                        ],
+                        expert_inferences: [
+                          {
+                            inference:
+                              "This surface appearance can be consistent with corrected, coated, or heavily finished leather rather than more natural grain.",
+                            quality_dimension: "material_finish",
+                            confidence: "low",
+                            basis: "inferred_from_image",
+                            why_it_matters:
+                              "Heavily finished leather can look uniform but may age less attractively than more natural grain.",
+                            caveat: "Cannot verify leather grade from image alone.",
+                            score_dimension: "quality",
+                            score_effect: "medium_negative"
+                          }
+                        ],
+                        missing_views: ["macro material close-up", "lining close-up"],
+                        image_quality_limits: ["studio lighting may exaggerate sheen"]
+                      })
+                    }
+                  ]
+                }
+              }
+            ]
+          });
+        }
+
+        return new Response(new Uint8Array([1, 2, 3]), {
+          headers: { "content-type": "image/png" }
+        });
+      }
+    });
+
+    expect(result.analysis?.visual_enrichment.visual_cues).toEqual([
+      {
+        cue: "The surface appears very smooth and uniform with a slight plastic-like sheen.",
+        confidence: "medium",
+        evidence_type: "texture_appearance",
+        image_limitations: ["studio lighting", "no macro close-up"]
+      }
+    ]);
+    expect(result.analysis?.visual_enrichment.expert_inferences).toEqual([
+      {
+        inference:
+          "This surface appearance can be consistent with corrected, coated, or heavily finished leather rather than more natural grain.",
+        quality_dimension: "material_finish",
+        confidence: "low",
+        basis: "inferred_from_image",
+        why_it_matters: "Heavily finished leather can look uniform but may age less attractively than more natural grain.",
+        caveat: "Cannot verify leather grade from image alone.",
+        score_dimension: "quality",
+        score_effect: "small_negative"
+      }
+    ]);
+    expect(result.analysis?.visual_enrichment.missing_views).toEqual(["macro material close-up", "lining close-up"]);
+    expect(result.analysis?.visual_enrichment.image_quality_limits).toEqual(["studio lighting may exaggerate sheen"]);
+  });
+
+  it("returns a stable structured backend response", async () => {
+    const result = await handleQualityCheckPayload(createPayload({ imageUrls: ["https://cdn.example.com/product.png"] }), {
+      env: testEnv({
+        QUALITY_CHECK_VISION_MODEL: "gemini-3.0-flash",
+        QUALITY_CHECK_CORE_MODEL: "gpt-5.4-mini",
+        QUALITY_CHECK_PREMIUM_FALLBACK_MODEL: "gpt-5.4",
+        QUALITY_CHECK_EMBEDDING_MODEL: "text-embedding-3-small"
+      }),
+      requestId: () => "request-stable",
+      fetcher: async (input) => {
+        const url = String(input);
+        if (url.startsWith("https://generativelanguage.googleapis.com/")) {
+          return Response.json({
+            candidates: [
+              {
+                content: {
+                  parts: [
+                    {
+                      text: JSON.stringify({
+                        visual_observations: [
+                          {
+                            observation: "Navy colour and fine surface texture are visible in the image",
+                            confidence: "medium",
+                            evidence_type: "texture_appearance",
+                            should_affect_score: true
+                          }
+                        ],
+                        visual_cues: [
+                          {
+                            cue: "Fine, even surface texture is visible across the body.",
+                            confidence: "medium",
+                            evidence_type: "texture_appearance",
+                            image_limitations: ["no macro close-up"]
+                          }
+                        ],
+                        expert_inferences: [
+                          {
+                            inference: "The even surface may support a cleaner, more refined aesthetic presentation.",
+                            quality_dimension: "aesthetic_refinement",
+                            confidence: "medium",
+                            basis: "inferred_from_image",
+                            why_it_matters: "Surface regularity affects perceived polish in simple knitwear.",
+                            caveat: "Cannot judge yarn quality or pilling resistance from the product image.",
+                            score_dimension: "aesthetic",
+                            score_effect: "small_positive"
+                          }
+                        ],
+                        missing_views: ["seam close-up"],
+                        image_quality_limits: ["studio lighting"]
+                      })
+                    }
+                  ]
+                }
+              }
+            ]
+          });
+        }
+
+        return new Response(new Uint8Array([1, 2, 3]), {
+          headers: { "content-type": "image/jpeg" }
+        });
+      }
+    });
+
+    expect(result).toEqual({
+      requestId: "request-stable",
+      summary: 'Stage 5 visual enrichment completed for "Merino Jumper" with 1 guarded observation(s).',
+      receivedUrl: "https://shop.example/products/merino-jumper",
+      source: "backend",
+      capturedTitle: "Merino Jumper",
+      analysis: {
+        stage: "stage_5",
+        status: "completed",
+        product: {
+          title: "Merino Jumper",
+          url: "https://shop.example/products/merino-jumper",
+          page_state: "product_page",
+          source_confidence_score: 0.86,
+          source_confidence_label: "high"
+        },
+        classification: createPayload({ imageUrls: ["https://cdn.example.com/product.png"] }).classification,
+        visual_enrichment: {
+          status: "completed",
+          model: "gemini-3.0-flash",
+          image_count: 1,
+          observations: [
+            {
+              observation: "Navy colour and fine surface texture are visible in the image",
+              confidence: "medium",
+              evidence_type: "texture_appearance",
+              should_affect_score: true
+            }
+          ],
+          visual_cues: [
+            {
+              cue: "Fine, even surface texture is visible across the body.",
+              confidence: "medium",
+              evidence_type: "texture_appearance",
+              image_limitations: ["no macro close-up"]
+            }
+          ],
+          expert_inferences: [
+            {
+              inference: "The even surface may support a cleaner, more refined aesthetic presentation.",
+              quality_dimension: "aesthetic_refinement",
+              confidence: "medium",
+              basis: "inferred_from_image",
+              why_it_matters: "Surface regularity affects perceived polish in simple knitwear.",
+              caveat: "Cannot judge yarn quality or pilling resistance from the product image.",
+              score_dimension: "aesthetic",
+              score_effect: "small_positive"
+            }
+          ],
+          missing_views: ["seam close-up"],
+          image_quality_limits: ["studio lighting"],
+          warnings: [
+            "vision observations are enrichment only",
+            "expert visual inferences must be caveated and low/medium confidence unless directly visible",
+            "do not assert fabric authenticity, exact construction method, or durability from images alone"
+          ]
+        },
+        model_config: {
+          vision_model: "gemini-3.0-flash",
+          core_model: "gpt-5.4-mini",
+          premium_fallback_model: "gpt-5.4",
+          embedding_model: "text-embedding-3-small",
+          openai_configured: true
+        }
+      }
+    });
+  });
+});
+
+function testEnv(overrides: Record<string, string> = {}) {
+  return {
+    GEMINI_API_KEY: "test-gemini-key",
+    OPENAI_API_KEY: "test-openai-key",
+    QUALITY_CHECK_VISION_MODEL: "gemini-3.0-flash",
+    QUALITY_CHECK_CORE_MODEL: "gpt-5.4-mini",
+    QUALITY_CHECK_PREMIUM_FALLBACK_MODEL: "gpt-5.4",
+    QUALITY_CHECK_EMBEDDING_MODEL: "text-embedding-3-small",
+    ...overrides
+  };
+}
+
+function createPayload({ imageUrls }: { imageUrls: string[] }): BackendPayload {
+  const fields = Object.fromEntries(FIELD_NAMES.map((name) => [name, field(null)])) as BackendPayload["page"]["product"]["fields"];
+  fields.title = field("Merino Jumper");
+  fields.brand = field("COS");
+  fields.price = field("120");
+  fields.currency = field("GBP");
+  fields.materials = field("100% merino wool");
+
+  return {
+    page: {
+      url: "https://shop.example/products/merino-jumper",
+      title: "Merino Jumper",
+      visibleText: "Merino Jumper 100% merino wool",
+      meta: {},
+      jsonLd: [],
+      hydration: [],
+      targetedText: [],
+      product: {
+        pageState: "product_page",
+        page_state: "product_page",
+        sourceMethod: "json_ld",
+        source_method: "json_ld",
+        sourceConfidenceScore: 0.86,
+        source_confidence_score: 0.86,
+        fields,
+        imageUrls,
+        image_urls: imageUrls,
+        warnings: []
+      },
+      capturedAt: "2026-05-22T00:00:00.000Z"
+    },
+    classification: {
+      category: "knitwear",
+      brand: "COS",
+      brand_tier: "mid-premium",
+      price: "£120",
+      material_family: "wool",
+      primary_colour: "navy",
+      style_tags: ["minimal", "smart casual"],
+      use_case: "office casual",
+      material_description: "100% merino wool.",
+      construction_description: "Construction method not clearly stated.",
+      quality_signals: ["stated on page: premium material term present"],
+      quality_concerns: ["unknown: construction method not verified"],
+      source_confidence_score: 0.86,
+      source_confidence_label: "high",
+      labelled_inferences: [{ field: "brand_tier", value: "mid-premium", basis: "inferred_from_brand" }]
+    },
+    visual_enrichment: {
+      status: imageUrls.length > 0 ? "requested" : "skipped",
+      model: "gemini-3.0-flash",
+      fallback_model: "gpt-5.4",
+      image_urls: imageUrls,
+      observations: [],
+      visual_cues: [],
+      expert_inferences: [],
+      missing_views: [],
+      image_quality_limits: [],
+      warnings: [
+        "vision observations are enrichment only",
+        "expert visual inferences must be caveated and low/medium confidence unless directly visible",
+        "do not assert fabric authenticity, exact construction method, or durability from images alone"
+      ],
+      prompt: imageUrls.length > 0 ? "Return strict JSON with visual_observations." : null
+    },
+    extension: {
+      stage: "stage_5",
+      version: "0.5.0"
+    }
+  };
+}
+
+function field(value: string | string[] | null) {
+  return {
+    value,
+    confidence: value ? 0.9 : 0,
+    source: value ? ("json_ld" as const) : null,
+    evidence: value ? ["test evidence"] : []
+  };
+}
+
+const FIELD_NAMES: ProductFieldName[] = [
+  "title",
+  "brand",
+  "price",
+  "currency",
+  "colour",
+  "description",
+  "materials",
+  "care",
+  "construction",
+  "origin",
+  "sizing",
+  "categoryBreadcrumbs"
+];

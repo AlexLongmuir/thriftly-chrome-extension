@@ -1,9 +1,10 @@
 import { JSDOM } from "jsdom";
+import { createBackendPayload } from "../src/shared/pageSnapshot";
 import { createPageSnapshotWithRetailerFallbacks } from "../src/shared/retailerFallbacks";
 
 const URLS = [
   "https://www.uniqlo.com/uk/en/products/E450535-000/00",
-  "https://www.arket.com/en_gbp/men/knitwear/product.fine-knit-merino-jumper-black.0490418001.html",
+  "https://www.arket.com/en-gb/product/relaxed-linen-shirt-beige-1283004006/",
   "https://www.arket.com/en_gbp/men/knitwear/product.heavy-knit-wool-blend-jumper-black.0787330025.html",
   "https://www.mrporter.com/en-gb/mens/product/mr-p/clothing/crew-necks/brushed-cashmere-sweater/46376663162905192",
   "https://www.mrporter.com/en-gb/mens/product/celine/clothing/crew-necks/cashmere-sweater/1647597323606986",
@@ -31,6 +32,7 @@ for (const url of URLS) {
   const html = await response.text();
   const dom = new JSDOM(html, { url });
   const snapshot = await createPageSnapshotWithRetailerFallbacks(dom.window.document, dom.window.location, fetch);
+  const payload = createBackendPayload(snapshot);
   const product = snapshot.product;
   const fields = Object.fromEntries(
     fieldNames.map((field) => [
@@ -52,6 +54,9 @@ for (const url of URLS) {
       sourceConfidenceScore: product.sourceConfidenceScore,
       fields,
       imageCount: product.imageUrls.length,
+      visualStatus: payload.visual_enrichment.status,
+      visualImageCount: payload.visual_enrichment.image_urls.length,
+      visualPromptHasExpertInferences: Boolean(payload.visual_enrichment.prompt?.includes("expert_inferences")),
       warnings: product.warnings
     })
   );

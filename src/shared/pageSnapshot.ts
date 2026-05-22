@@ -10,6 +10,7 @@ import type {
   SourceMethod
 } from "./messages";
 import { classifyProductEvidence } from "./classification";
+import { createVisualEnrichment } from "./visualEnrichment";
 
 const MAX_VISIBLE_TEXT_LENGTH = 7000;
 const MAX_TARGETED_SNIPPETS = 24;
@@ -1474,12 +1475,15 @@ export function createPageSnapshot(documentRef: Document, locationRef: Location)
 }
 
 export function createBackendPayload(page: PageSnapshot): BackendPayload {
+  const classification = classifyProductEvidence(page.product);
+
   return {
     page,
-    classification: classifyProductEvidence(page.product),
+    classification,
+    visual_enrichment: createVisualEnrichment(page.product, classification),
     extension: {
-      stage: "stage_4",
-      version: "0.4.0"
+      stage: "stage_5",
+      version: "0.5.0"
     }
   };
 }

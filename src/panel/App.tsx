@@ -3,6 +3,7 @@ import { submitQualityCheck } from "../api/client";
 import { classifyProductEvidence } from "../shared/classification";
 import type { ActiveTabExtraction, BackendVerdict, ProductClassification, ProductFieldName } from "../shared/messages";
 import { createBackendPayload } from "../shared/pageSnapshot";
+import { createVisualEnrichment } from "../shared/visualEnrichment";
 import { requestActiveTabExtraction } from "./chromeApi";
 
 type Status = "idle" | "extracting" | "sending" | "complete" | "error";
@@ -16,13 +17,17 @@ export function App() {
   const statusLabel = useMemo(() => {
     if (status === "extracting") return "Reading active tab";
     if (status === "sending") return "Sending extraction payload";
-    if (status === "complete") return "Stage 4 classified";
+    if (status === "complete") return "Stage 5 ready";
     if (status === "error") return "Needs attention";
     return "Ready";
   }, [status]);
   const classification = useMemo(
     () => (extraction ? classifyProductEvidence(extraction.snapshot.product) : null),
     [extraction]
+  );
+  const visualEnrichment = useMemo(
+    () => (extraction && classification ? createVisualEnrichment(extraction.snapshot.product, classification) : null),
+    [classification, extraction]
   );
 
   async function handleRunCheck() {
@@ -50,14 +55,14 @@ export function App() {
       <header className="panel-header">
         <div>
           <p className="eyebrow">Quality Check</p>
-          <h1>Product page test</h1>
+          <h1>Visual enrichment test</h1>
         </div>
         <span className={`status-pill status-pill--${status}`}>{statusLabel}</span>
       </header>
 
       <section className="primary-panel">
         <p className="panel-copy">
-          Extract product evidence from the active tab, then normalise it into controlled category, material, brand-tier, and confidence fields.
+          Extract product evidence from the active tab, classify it, and prepare a guarded visual-enrichment request from product images.
         </p>
         <button className="primary-button" type="button" onClick={handleRunCheck} disabled={status === "extracting" || status === "sending"}>
           {status === "extracting" || status === "sending" ? "Checking..." : "Run page check"}
@@ -152,10 +157,57 @@ export function App() {
         </section>
       ) : null}
 
+      {visualEnrichment ? (
+        <section className="message-block">
+          <h2>Visual enrichment</h2>
+          <div className="classification-grid">
+            <Metric label="Status" value={visualEnrichment.status} />
+            <Metric label="Vision model" value={visualEnrichment.model} />
+            <Metric label="Images" value={String(visualEnrichment.image_urls.length)} />
+            <Metric label="Fallback" value={visualEnrichment.fallback_model} />
+          </div>
+          <ClassificationList title="Vision guardrails" items={visualEnrichment.warnings} emptyLabel="None" />
+        </section>
+      ) : null}
+
       {verdict ? (
         <section className="message-block message-block--success">
           <h2>Backend response</h2>
           <p>{verdict.summary}</p>
+          {verdict.analysis ? (
+            <>
+              <div className="classification-grid">
+                <Metric label="Stage" value={verdict.analysis.stage} />
+                <Metric label="Status" value={verdict.analysis.status} />
+                <Metric label="Vision" value={verdict.analysis.visual_enrichment.model} />
+                <Metric label="Observations" value={String(verdict.analysis.visual_enrichment.observations.length)} />
+              </div>
+              <ClassificationList
+                title="Expert visual inferences"
+                items={verdict.analysis.visual_enrichment.expert_inferences.map((inference) =>
+                  `${inference.inference} Why it matters: ${inference.why_it_matters} (${inference.confidence}, ${inference.score_effect})`
+                )}
+                emptyLabel="None"
+              />
+              <ClassificationList
+                title="Diagnostic visual cues"
+                items={verdict.analysis.visual_enrichment.visual_cues.map((cue) =>
+                  `${cue.cue} (${cue.confidence}, ${cue.evidence_type})`
+                )}
+                emptyLabel="None"
+              />
+              <ClassificationList
+                title="Backend visual observations"
+                items={verdict.analysis.visual_enrichment.observations.map((observation) =>
+                  `${observation.observation} (${observation.confidence}, ${observation.evidence_type})`
+                )}
+                emptyLabel="None"
+              />
+              <ClassificationList title="Missing image views" items={verdict.analysis.visual_enrichment.missing_views} emptyLabel="None" />
+              <ClassificationList title="Image limits" items={verdict.analysis.visual_enrichment.image_quality_limits} emptyLabel="None" />
+              <ClassificationList title="Backend warnings" items={verdict.analysis.visual_enrichment.warnings} emptyLabel="None" />
+            </>
+          ) : null}
           <dl className="details-list">
             <div>
               <dt>Source</dt>
