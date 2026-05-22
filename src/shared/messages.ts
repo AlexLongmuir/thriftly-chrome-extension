@@ -90,6 +90,51 @@ export type ProductExtraction = {
   warnings: string[];
 };
 
+export type ProductCategory =
+  | "knitwear"
+  | "shirt"
+  | "t-shirt"
+  | "trousers"
+  | "denim"
+  | "outerwear"
+  | "footwear"
+  | "bag"
+  | "accessory"
+  | "dress"
+  | "skirt"
+  | "activewear"
+  | "other";
+
+export type MaterialFamily = "wool" | "cotton" | "linen" | "leather" | "silk" | "synthetic" | "viscose" | "blend" | "unknown";
+
+export type BrandTier = "budget" | "high-street" | "mid-premium" | "premium" | "luxury" | "unknown";
+
+export type SourceConfidenceLabel = "high" | "medium" | "low";
+
+export type LabelledInference = {
+  field: keyof ProductClassification;
+  value: string;
+  basis: "stated_on_page" | "inferred_from_title" | "inferred_from_category" | "inferred_from_material" | "inferred_from_brand" | "unknown";
+};
+
+export type ProductClassification = {
+  category: ProductCategory;
+  brand: string | null;
+  brand_tier: BrandTier;
+  price: string | null;
+  material_family: MaterialFamily;
+  primary_colour: string | null;
+  style_tags: string[];
+  use_case: string;
+  material_description: string;
+  construction_description: string;
+  quality_signals: string[];
+  quality_concerns: string[];
+  source_confidence_score: number;
+  source_confidence_label: SourceConfidenceLabel;
+  labelled_inferences: LabelledInference[];
+};
+
 export type ActiveTabExtraction = {
   tabId: number;
   tabUrl?: string;
@@ -106,8 +151,9 @@ export type BackendVerdict = {
 
 export type BackendPayload = {
   page: PageSnapshot;
+  classification: ProductClassification;
   extension: {
-    stage: "stage_2";
+    stage: "stage_4";
     version: string;
   };
 };

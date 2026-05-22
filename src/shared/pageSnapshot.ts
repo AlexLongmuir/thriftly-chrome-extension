@@ -9,6 +9,7 @@ import type {
   ProductFieldName,
   SourceMethod
 } from "./messages";
+import { classifyProductEvidence } from "./classification";
 
 const MAX_VISIBLE_TEXT_LENGTH = 7000;
 const MAX_TARGETED_SNIPPETS = 24;
@@ -332,7 +333,12 @@ function collectMetaCandidates(meta: Record<string, string>): Partial<Record<Pro
   add("materials", extractPatternEvidence(pickMeta(meta, ["og:description", "description", "twitter:description"]), MATERIAL_EVIDENCE_PATTERNS), 0.54, "description material evidence");
   add("care", extractPatternEvidence(pickMeta(meta, ["og:description", "description", "twitter:description"]), CARE_EVIDENCE_PATTERNS), 0.52, "description care evidence");
   add("brand", pickMeta(meta, ["product:brand", "brand"]), 0.76, "brand");
-  add("price", pickMeta(meta, ["product:price:amount", "og:price:amount", "price", "twitter:data1"]), 0.76, "price");
+  add(
+    "price",
+    pickMeta(meta, ["product:sale_price:amount", "og:sale_price:amount", "sale_price", "product:price:amount", "og:price:amount", "price", "twitter:data1"]),
+    0.76,
+    "price"
+  );
   add("currency", pickMeta(meta, ["product:price:currency", "og:price:currency", "currency"]), 0.76, "currency");
   add("colour", pickMeta(meta, ["product:color", "product:colour", "color", "colour"]), 0.72, "colour");
 
@@ -598,9 +604,8 @@ function collectDomPriceCandidates(documentRef: Document): Partial<Record<Produc
     const price = extractPrice(raw);
     if (!price) continue;
 
-    add("price", price.amount, 0.7, "price DOM");
+    add("price", price.amount, confidenceForDomPrice(node, raw), `price DOM: ${raw.slice(0, 160)}`);
     add("currency", price.currency, 0.68, "price DOM currency");
-    break;
   }
 
   return candidates;
@@ -608,7 +613,7 @@ function collectDomPriceCandidates(documentRef: Document): Partial<Record<Produc
 
 function extractPrice(value: string): { amount: string; currency: string | null } | null {
   const matches = Array.from(value.matchAll(/(?:£|\$|€|¥)\s*\d{1,5}(?:[,.]\d{2})?|\d{1,5}(?:[,.]\d{2})?\s*(?:GBP|USD|EUR|JPY)/gi));
-  const match = matches.at(-1);
+  const match = choosePriceMatch(value, matches);
   if (!match?.[0]) return null;
 
   const raw = match[0];
@@ -619,6 +624,52 @@ function extractPrice(value: string): { amount: string; currency: string | null 
     amount,
     currency: currencyFromPriceText(raw)
   };
+}
+
+function choosePriceMatch(value: string, matches: RegExpMatchArray[]): RegExpMatchArray | undefined {
+  if (matches.length <= 1) return matches[0];
+
+  const lowered = value.toLowerCase();
+  const labelledSale = matches.find((match) => {
+    const prefix = lowered.slice(Math.max(0, match.index! - 48), match.index);
+    return /\b(?:discounted|sale|current|now|member|special|offer|deal)\s*(?:price)?\s*:?$/.test(prefix);
+  });
+  if (labelledSale) return labelledSale;
+
+  const labelledRegular = matches.find((match) => {
+    const prefix = lowered.slice(Math.max(0, match.index! - 48), match.index);
+    return /\b(?:was|regular|original|previous|rrp)\s*(?:price)?\s*:?$/.test(prefix);
+  });
+  if (labelledRegular && matches.some((match) => match !== labelledRegular)) {
+    return matches.find((match) => match !== labelledRegular);
+  }
+
+  if (/\b(?:sale price in effect|final sale|discounted price)\b/.test(lowered) || /-\d{1,2}%/.test(value)) {
+    return matches[0];
+  }
+
+  return matches.at(-1);
+}
+
+function confidenceForDomPrice(node: Element, raw: string): number {
+  const descriptor = [
+    raw,
+    node.getAttribute("class"),
+    node.getAttribute("data-testid"),
+    node.getAttribute("data-test-id"),
+    node.getAttribute("data-tau"),
+    node.getAttribute("aria-label")
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  const priceCount = Array.from(
+    raw.matchAll(/(?:£|\$|€|¥)\s*\d{1,5}(?:[,.]\d{2})?|\d{1,5}(?:[,.]\d{2})?\s*(?:GBP|USD|EUR|JPY)/gi)
+  ).length;
+
+  if (/\b(?:sale|discount|reduced|current|now|member|special|offer|deal)\b/.test(descriptor) || priceCount > 1) return 0.96;
+  if (/\b(?:old|was|previous|regular|original|rrp|strike|strikethrough|compare)\b/.test(descriptor)) return 0.42;
+  return 0.7;
 }
 
 function currencyFromPriceText(value: string): string | null {
@@ -649,7 +700,7 @@ function collectHydrationCandidates(snippets: EvidenceSnippet[]): Partial<Record
 
     add("title", extractJsonishString(text, ["name", "title", "productName"]), 0.8, [label]);
     add("brand", extractJsonishString(text, ["brand", "brandName"]), 0.78, [label]);
-    add("price", extractJsonishString(text, ["price", "currentPrice", "salePrice"]), 0.8, [label]);
+    add("price", extractJsonishString(text, ["currentPrice", "salePrice", "salesPrice", "price"]), 0.8, [label]);
     add("currency", extractJsonishString(text, ["currency", "priceCurrency"]), 0.78, [label]);
     add("colour", extractJsonishString(text, ["colour", "color", "colorName", "colourName"]), 0.74, [label]);
     add("description", extractJsonishString(text, ["description", "shortDescription"]), 0.72, [label]);
@@ -741,7 +792,7 @@ function collectStructuredScriptCandidates(documentRef: Document): Partial<Recor
 
       add("title", firstString(record.name, record.defaultName, record.title, record.productName), 0.84, `${label} product title`);
       add("brand", firstString(record.brandName, record.pr_external_brand, record.brand, nestedString(record.brand, ["name"])), 0.82, `${label} product brand`);
-      add("price", firstString(record.priceAsNumber, record.price, record.currentPrice, record.salePrice, record.salesPrice), 0.82, `${label} product price`);
+      add("price", firstString(record.currentPrice, record.salePrice, record.salesPrice, record.priceAsNumber, record.price), 0.82, `${label} product price`);
       add("currency", firstString(record.currency, record.priceCurrency), 0.8, `${label} product currency`);
       add("colour", colour, 0.78, `${label} product colour`);
       add("description", description, 0.78, `${label} product description`);
@@ -983,6 +1034,29 @@ function collectVisibleFallbackCandidates(visibleText: string, pageTitle: string
     ];
   }
 
+  const price = extractPrice(visibleText);
+  if (price) {
+    candidates.price = [
+      {
+        value: price.amount,
+        confidence: 0.44,
+        source: "visible_text_fallback",
+        evidence: ["visible page text price"]
+      }
+    ];
+
+    if (price.currency) {
+      candidates.currency = [
+        {
+          value: price.currency,
+          confidence: 0.44,
+          source: "visible_text_fallback",
+          evidence: ["visible page text currency"]
+        }
+      ];
+    }
+  }
+
   return candidates;
 }
 
@@ -1203,7 +1277,20 @@ function sanitizeFieldValue(field: ProductFieldName, value: string | string[] | 
   return cleaned.slice(0, 1000);
 }
 
-function classifyPageState(visibleText: string, fields: Record<ProductFieldName, ExtractedField>, jsonLd: unknown[]): PageState {
+function isSupportedPageLocation(locationRef: Location): boolean {
+  if (!["http:", "https:"].includes(locationRef.protocol)) return false;
+  if (/\.(?:pdf|docx?|xlsx?|pptx?)(?:$|[?#])/i.test(locationRef.pathname)) return false;
+  return true;
+}
+
+function classifyPageState(
+  visibleText: string,
+  fields: Record<ProductFieldName, ExtractedField>,
+  jsonLd: unknown[],
+  locationRef: Location
+): PageState {
+  if (!isSupportedPageLocation(locationRef)) return "unsupported_page";
+
   const lowered = visibleText.toLowerCase();
   if (/(access denied|forbidden|captcha|enable cookies|temporarily unavailable|request blocked|just a moment|checking your browser)/.test(lowered)) {
     return "blocked_or_unavailable";
@@ -1213,11 +1300,17 @@ function classifyPageState(visibleText: string, fields: Record<ProductFieldName,
 
   const hasProductJsonLd = flattenJsonLdItems(jsonLd).some((item) => isJsonLdType(item, "Product"));
   const hasTargetedProductEvidence = Boolean(
-    fields.price.value ||
+    (fields.price.value && fields.price.source !== "visible_text_fallback") ||
       (fields.description.value && fields.description.source !== "visible_text_fallback") ||
       (fields.materials.value && fields.materials.source !== "visible_text_fallback")
   );
-  const hasProductFacts = Boolean(fields.title.value && hasTargetedProductEvidence);
+  const hasVisibleFallbackProductEvidence = Boolean(
+    fields.title.value &&
+      fields.title.source === "visible_text_fallback" &&
+      (fields.price.value || fields.materials.value) &&
+      /(?:\/products?\/|\/productpage\.|\/style\/|\/p\/|product\.|clp\d+|p\d{8})/i.test(locationRef.pathname)
+  );
+  const hasProductFacts = Boolean(fields.title.value && (hasTargetedProductEvidence || hasVisibleFallbackProductEvidence));
   if (hasProductJsonLd || hasProductFacts) return "product_page";
 
   if (visibleText.length < 40) return "thin_page";
@@ -1261,6 +1354,12 @@ function collectWarnings(fields: Record<ProductFieldName, ExtractedField>, pageS
   const warnings: string[] = [];
 
   if (pageState !== "product_page") warnings.push(`page classified as ${pageState}`);
+  for (const field of FIELD_NAMES) {
+    const value = fields[field].value;
+    if (hasValue(value) && fields[field].confidence > 0 && fields[field].confidence < 0.6) {
+      warnings.push(`low-confidence ${field} from ${fields[field].source}`);
+    }
+  }
   if (!fields.materials.value) warnings.push("materials/composition not found");
   if (!fields.care.value) warnings.push("care information not found");
   if (!fields.brand.value) warnings.push("brand not found");
@@ -1334,7 +1433,7 @@ export function extractProductData(documentRef: Document, locationRef: Location)
     collectUrlCandidates(locationRef),
     collectVisibleFallbackCandidates(visibleText, pageTitle)
   ]);
-  const pageState = classifyPageState(`${pageTitle} ${visibleText}`, fields, jsonLd);
+  const pageState = classifyPageState(`${pageTitle} ${visibleText}`, fields, jsonLd, locationRef);
   const productFields = clearProductFieldsForNonProductPage(fields, pageState);
   const sourceMethod = inferSourceMethod(productFields);
   const sourceConfidenceScore = calculateSourceConfidence(productFields, pageState);
@@ -1377,9 +1476,10 @@ export function createPageSnapshot(documentRef: Document, locationRef: Location)
 export function createBackendPayload(page: PageSnapshot): BackendPayload {
   return {
     page,
+    classification: classifyProductEvidence(page.product),
     extension: {
-      stage: "stage_2",
-      version: "0.2.0"
+      stage: "stage_4",
+      version: "0.4.0"
     }
   };
 }

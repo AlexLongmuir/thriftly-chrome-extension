@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { submitQualityCheck } from "../api/client";
-import type { ActiveTabExtraction, BackendVerdict, ProductFieldName } from "../shared/messages";
+import { classifyProductEvidence } from "../shared/classification";
+import type { ActiveTabExtraction, BackendVerdict, ProductClassification, ProductFieldName } from "../shared/messages";
 import { createBackendPayload } from "../shared/pageSnapshot";
 import { requestActiveTabExtraction } from "./chromeApi";
 
@@ -15,10 +16,14 @@ export function App() {
   const statusLabel = useMemo(() => {
     if (status === "extracting") return "Reading active tab";
     if (status === "sending") return "Sending extraction payload";
-    if (status === "complete") return "Stage 2 extracted";
+    if (status === "complete") return "Stage 4 classified";
     if (status === "error") return "Needs attention";
     return "Ready";
   }, [status]);
+  const classification = useMemo(
+    () => (extraction ? classifyProductEvidence(extraction.snapshot.product) : null),
+    [extraction]
+  );
 
   async function handleRunCheck() {
     setStatus("extracting");
@@ -52,8 +57,7 @@ export function App() {
 
       <section className="primary-panel">
         <p className="panel-copy">
-          Extract product evidence from the active tab, prioritising structured page data before targeted DOM
-          text and visible-text fallback.
+          Extract product evidence from the active tab, then normalise it into controlled category, material, brand-tier, and confidence fields.
         </p>
         <button className="primary-button" type="button" onClick={handleRunCheck} disabled={status === "extracting" || status === "sending"}>
           {status === "extracting" || status === "sending" ? "Checking..." : "Run page check"}
@@ -112,6 +116,42 @@ export function App() {
         </section>
       ) : null}
 
+      {classification ? (
+        <section className="message-block">
+          <h2>Structured classification</h2>
+          <div className="classification-grid">
+            <Metric label="Category" value={classification.category} />
+            <Metric label="Material" value={classification.material_family} />
+            <Metric label="Brand tier" value={classification.brand_tier} />
+            <Metric label="Confidence" value={`${classification.source_confidence_label} · ${classification.source_confidence_score.toFixed(2)}`} />
+          </div>
+          <dl className="details-list">
+            {CLASSIFICATION_ROWS.map(([label, value]) => (
+              <div key={label}>
+                <dt>{label}</dt>
+                <dd>{value(classification)}</dd>
+              </div>
+            ))}
+          </dl>
+          <ClassificationList title="Quality signals" items={classification.quality_signals} emptyLabel="None found" />
+          <ClassificationList title="Quality concerns" items={classification.quality_concerns} emptyLabel="None found" />
+          <div className="inference-table">
+            <h3>Labelled inferences</h3>
+            {classification.labelled_inferences.length ? (
+              classification.labelled_inferences.map((inference, index) => (
+                <div className="inference-row" key={`${inference.field}-${inference.value}-${index}`}>
+                  <span>{inference.field}</span>
+                  <strong>{inference.value}</strong>
+                  <em>{inference.basis}</em>
+                </div>
+              ))
+            ) : (
+              <p className="empty-copy">None</p>
+            )}
+          </div>
+        </section>
+      ) : null}
+
       {verdict ? (
         <section className="message-block message-block--success">
           <h2>Backend response</h2>
@@ -161,6 +201,42 @@ const FIELD_LABELS: Record<ProductFieldName, string> = {
   sizing: "Sizing",
   categoryBreadcrumbs: "Category"
 };
+
+function Metric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="metric">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function ClassificationList({ title, items, emptyLabel }: { title: string; items: string[]; emptyLabel: string }) {
+  return (
+    <div className="classification-list">
+      <h3>{title}</h3>
+      {items.length ? (
+        <ul>
+          {items.map((item) => (
+            <li key={item}>{item}</li>
+          ))}
+        </ul>
+      ) : (
+        <p className="empty-copy">{emptyLabel}</p>
+      )}
+    </div>
+  );
+}
+
+const CLASSIFICATION_ROWS: Array<[string, (classification: ProductClassification) => string]> = [
+  ["Brand", (classification) => classification.brand || "Unknown"],
+  ["Price", (classification) => classification.price || "Unknown"],
+  ["Primary colour", (classification) => classification.primary_colour || "Unknown"],
+  ["Style tags", (classification) => (classification.style_tags.length ? classification.style_tags.join(", ") : "None")],
+  ["Use case", (classification) => classification.use_case],
+  ["Material description", (classification) => classification.material_description],
+  ["Construction description", (classification) => classification.construction_description]
+];
 
 function formatFieldValue(value: string | string[] | null): string {
   if (Array.isArray(value)) return value.length ? value.join(" › ") : "Not found";

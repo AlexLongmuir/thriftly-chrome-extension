@@ -28,7 +28,7 @@ function createMockVerdict(payload: BackendPayload): BackendVerdict {
 
   return {
     requestId: `mock-${Date.now()}`,
-    summary: `Stage 2 extraction succeeded for "${title}" with ${payload.page.product.sourceMethod} evidence and ${confidence} source confidence.`,
+    summary: `Stage 4 classification succeeded for "${title}" as ${payload.classification.category} / ${payload.classification.material_family} with ${payload.classification.source_confidence_label} source confidence (${confidence}).`,
     receivedUrl: payload.page.url,
     source: "mock",
     capturedTitle: title

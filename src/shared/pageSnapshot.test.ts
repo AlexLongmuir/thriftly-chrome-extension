@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { JSDOM } from "jsdom";
+import { classifyProductEvidence } from "./classification";
 import {
   collectImageUrls,
   collectJsonLd,
@@ -301,6 +302,100 @@ describe("page snapshot helpers", () => {
     expect(product.fields.care.value).toContain("Specialist leather dry clean only");
   });
 
+  it("prefers discounted targeted DOM price over stale structured product price", () => {
+    const dom = new JSDOM(
+      `
+        <!doctype html>
+        <title>Slim Fit Round-necked T-shirt</title>
+        <script type="application/ld+json">
+          {
+            "@context": "https://schema.org",
+            "@type": "Product",
+            "name": "Slim Fit Round-necked T-shirt",
+            "brand": {"@type": "Brand", "name": "H&M"},
+            "description": "Slim-fit T-shirt in soft cotton jersey.",
+            "offers": {"@type": "Offer", "price": "6.99", "priceCurrency": "GBP"}
+          }
+        </script>
+        <body>
+          <main>
+            <h1>Slim Fit Round-necked T-shirt</h1>
+            <div class="price parbase product-item-price">
+              <span class="old-price">£6.99</span>
+              <span class="sale-price">£3.99</span>
+            </div>
+            <section class="product-details">Composition: 100% cotton.</section>
+          </main>
+        </body>
+      `,
+      { url: "https://www2.hm.com/en_gb/productpage.0570002002.html" }
+    );
+
+    const product = extractProductData(dom.window.document, dom.window.location);
+
+    expect(product.fields.price.value).toBe("3.99");
+    expect(product.fields.price.source).toBe("dom_targeted");
+    expect(product.fields.currency.value).toBe("GBP");
+  });
+
+  it("uses the discounted H&M price for the exact reported product URL", () => {
+    const dom = new JSDOM(
+      `
+        <!doctype html>
+        <title>Slim Fit Round-necked T-shirt</title>
+        <script type="application/ld+json">
+          {
+            "@context": "https://schema.org",
+            "@type": "Product",
+            "name": "Slim Fit Round-necked T-shirt",
+            "brand": {"@type": "Brand", "name": "H&M"},
+            "description": "Slim-fit T-shirt in soft cotton jersey.",
+            "offers": {"@type": "Offer", "price": "5.95", "priceCurrency": "GBP"}
+          }
+        </script>
+        <body>
+          <main>
+            <h1>Slim Fit Round-necked T-shirt</h1>
+            <div class="price parbase product-item-price">
+              <span class="price-value">£3.99</span><span class="price-value">£5.95</span>
+              <span>Sale price in effect for 90+ days</span>
+            </div>
+            <section class="product-details">Composition: 100% cotton.</section>
+          </main>
+        </body>
+      `,
+      { url: "https://www2.hm.com/en_gb/productpage.0570002002.html" }
+    );
+
+    const product = extractProductData(dom.window.document, dom.window.location);
+
+    expect(product.fields.price.value).toBe("3.99");
+    expect(product.fields.price.source).toBe("dom_targeted");
+    expect(product.fields.currency.value).toBe("GBP");
+  });
+
+  it("prefers current and sale prices over generic price keys in hydration blobs", () => {
+    const dom = new JSDOM(
+      `
+        <!doctype html>
+        <title>Sale product</title>
+        <body>
+          <main>
+            <h1>Sale product</h1>
+            <script id="__NEXT_DATA__">
+              {"props":{"pageProps":{"product":{"name":"Cotton Overshirt","brand":"Example","price":"89","currentPrice":"59","salePrice":"49","currency":"GBP","composition":"100% cotton"}}}}
+            </script>
+          </main>
+        </body>
+      `,
+      { url: "https://shop.example/products/cotton-overshirt" }
+    );
+
+    const product = extractProductData(dom.window.document, dom.window.location);
+
+    expect(product.fields.price.value).toBe("59");
+  });
+
   it("rejects zero price candidates as missing product price", () => {
     const dom = new JSDOM(
       `
@@ -424,6 +519,111 @@ describe("page snapshot helpers", () => {
     expect(product.warnings).toContain("page classified as not_product_page");
   });
 
+  it("classifies thin pages before analysis", () => {
+    const dom = new JSDOM("<!doctype html><body>Loading</body>", {
+      url: "https://shop.example/products/loading"
+    });
+
+    const product = extractProductData(dom.window.document, dom.window.location);
+
+    expect(product.pageState).toBe("thin_page");
+    expect(product.sourceConfidenceScore).toBe(0);
+    expect(product.fields.title.value).toBeNull();
+    expect(product.warnings).toContain("page classified as thin_page");
+  });
+
+  it("classifies unsupported browser/document locations before analysis", () => {
+    const dom = new JSDOM(
+      `
+        <!doctype html>
+        <title>Local product</title>
+        <body><main><h1>Local product</h1><section>Composition: 100% cotton. £30</section></main></body>
+      `,
+      { url: "file:///Users/alex/product.html" }
+    );
+
+    const product = extractProductData(dom.window.document, dom.window.location);
+
+    expect(product.pageState).toBe("unsupported_page");
+    expect(product.sourceConfidenceScore).toBe(0);
+    expect(product.fields.materials.value).toBeNull();
+    expect(product.warnings).toContain("page classified as unsupported_page");
+  });
+
+  it("keeps visible-text-only product evidence low confidence instead of dropping the product page", () => {
+    const dom = new JSDOM(
+      `
+        <!doctype html>
+        <title>Plain Cotton Shirt</title>
+        <body>
+          <h1>Plain Cotton Shirt</h1>
+          <p>£39.50</p>
+        </body>
+      `,
+      { url: "https://shop.example/products/plain-cotton-shirt" }
+    );
+
+    const product = extractProductData(dom.window.document, dom.window.location);
+
+    expect(product.pageState).toBe("product_page");
+    expect(product.sourceMethod).toBe("visible_text_fallback");
+    expect(product.sourceConfidenceScore).toBeLessThan(0.3);
+    expect(product.fields.title).toMatchObject({
+      value: "Plain Cotton Shirt",
+      confidence: 0.48,
+      source: "visible_text_fallback"
+    });
+    expect(product.fields.price).toMatchObject({
+      value: "39.50",
+      confidence: 0.44,
+      source: "visible_text_fallback"
+    });
+    expect(product.fields.currency.value).toBe("GBP");
+    expect(product.warnings).toContain("low-confidence title from visible_text_fallback");
+    expect(product.warnings).toContain("low-confidence price from visible_text_fallback");
+  });
+
+  it("does not classify generic pages as products just because visible text contains a price", () => {
+    const dom = new JSDOM(
+      `
+        <!doctype html>
+        <title>Shipping information</title>
+        <body><h1>Shipping information</h1><p>Express delivery costs £4.99 for UK orders.</p></body>
+      `,
+      { url: "https://shop.example/help/shipping" }
+    );
+
+    const product = extractProductData(dom.window.document, dom.window.location);
+
+    expect(product.pageState).toBe("not_product_page");
+    expect(product.fields.price.value).toBeNull();
+    expect(product.sourceConfidenceScore).toBe(0);
+  });
+
+  it("rejects nav/category labels as brands across confidence calculation", () => {
+    const dom = new JSDOM(
+      `
+        <!doctype html>
+        <title>Cashmere jumper</title>
+        <meta property="product:brand" content="New In">
+        <script type="application/ld+json">{
+          "@type":"Product",
+          "name":"Cashmere jumper",
+          "description":"100% cashmere jumper.",
+          "offers":{"price":"120","priceCurrency":"GBP"}
+        }</script>
+        <body><main><h1>Cashmere jumper</h1></main></body>
+      `,
+      { url: "https://shop.example/products/cashmere-jumper" }
+    );
+
+    const product = extractProductData(dom.window.document, dom.window.location);
+
+    expect(product.pageState).toBe("product_page");
+    expect(product.fields.brand.value).toBeNull();
+    expect(product.warnings).toContain("brand not found");
+  });
+
   it("suppresses polluted fields when an error page contains product-like words", () => {
     const dom = new JSDOM(
       `
@@ -539,7 +739,175 @@ describe("page snapshot helpers", () => {
     expect(product.fields.sizing.value).toEqual(["Regular fit."]);
   });
 
-  it("creates a bounded stage 2 backend payload", () => {
+  it("normalises Stage 4 classification with controlled values and labelled inferences", () => {
+    const dom = new JSDOM(
+      `
+        <!doctype html>
+        <title>Heavy Knit Wool Blend Jumper</title>
+        <script type="application/ld+json">
+          {
+            "@type": "Product",
+            "name": "Heavy Knit Wool Blend Jumper",
+            "brand": "ARKET",
+            "description": "Chunky jumper knitted in a plain stitch.",
+            "material": "Wool 65%, Polyamide 35%",
+            "offers": {"price": "77", "priceCurrency": "GBP"}
+          }
+        </script>
+        <body>
+          <main>
+            <h1>Heavy Knit Wool Blend Jumper</h1>
+            <section>Product details: Construction: plain stitch.</section>
+            <section>Colour: Black</section>
+          </main>
+        </body>
+      `,
+      { url: "https://www.arket.com/en_gbp/men/knitwear/product.heavy-knit-wool-blend-jumper-black.0787330025.html" }
+    );
+
+    const product = extractProductData(dom.window.document, dom.window.location);
+    const classification = classifyProductEvidence(product);
+
+    expect(classification).toMatchObject({
+      category: "knitwear",
+      brand: "ARKET",
+      brand_tier: "mid-premium",
+      price: "£77",
+      material_family: "blend",
+      primary_colour: "black",
+      use_case: "casual",
+      source_confidence_label: "high"
+    });
+    expect(classification.style_tags).toContain("knit");
+    expect(classification.material_description).toBe("Wool 65%, Polyamide 35%.");
+    expect(classification.construction_description).toContain("plain stitch");
+    expect(classification.quality_concerns).toContain("inferred from material: synthetic content may affect handle or breathability");
+    expect(classification.labelled_inferences).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ field: "brand_tier", value: "mid-premium", basis: "inferred_from_brand" }),
+        expect.objectContaining({ field: "style_tags", value: "knit" })
+      ])
+    );
+  });
+
+  it("keeps Stage 4 unknowns explicit when source evidence is weak", () => {
+    const dom = new JSDOM(
+      `
+        <!doctype html>
+        <title>Plain Cotton Shirt</title>
+        <body>
+          <h1>Plain Cotton Shirt</h1>
+          <p>£39.50</p>
+        </body>
+      `,
+      { url: "https://shop.example/products/plain-cotton-shirt" }
+    );
+
+    const classification = classifyProductEvidence(extractProductData(dom.window.document, dom.window.location));
+
+    expect(classification.category).toBe("shirt");
+    expect(classification.material_family).toBe("unknown");
+    expect(classification.brand_tier).toBe("unknown");
+    expect(classification.source_confidence_label).toBe("low");
+    expect(classification.material_description).toBe("Material composition not clearly stated.");
+    expect(classification.quality_concerns).toEqual(
+      expect.arrayContaining([
+        "unknown: material composition not found",
+        "unknown: construction method not verified",
+        "unknown: weak source data limits classification confidence"
+      ])
+    );
+    expect(classification.labelled_inferences).toEqual(
+      expect.arrayContaining([expect.objectContaining({ field: "category", value: "shirt", basis: "inferred_from_title" })])
+    );
+  });
+
+  it("uses primary shell material for Stage 4 leather outerwear classification", () => {
+    const dom = new JSDOM(
+      `
+        <!doctype html>
+        <title>Miller Leather Jacket</title>
+        <script type="application/ld+json">{
+          "@type":"Product",
+          "name":"Miller Leather Jacket",
+          "brand":"AllSaints",
+          "description":"Vintage motorcycle jacket.",
+          "offers":{"price":"399","priceCurrency":"GBP"}
+        }</script>
+        <body>
+          <main>
+            <h1>Miller Leather Jacket</h1>
+            <section>Fabric & Care Shell: 100% sheep leather. Lining: 100% recycled polyester. Specialist leather dry clean only.</section>
+          </main>
+        </body>
+      `,
+      { url: "https://www.allsaints.com/eu/men/leathers/leather-jackets/miller-leather-jacket/M009LA-5.html" }
+    );
+
+    const classification = classifyProductEvidence(extractProductData(dom.window.document, dom.window.location));
+
+    expect(classification.category).toBe("outerwear");
+    expect(classification.material_family).toBe("leather");
+    expect(classification.brand_tier).toBe("premium");
+    expect(classification.quality_signals).toContain(
+      "inferred from material: leather can be a positive durability signal when genuine and well constructed"
+    );
+  });
+
+  it("assigns more precise Stage 4 style tags across smart, smart casual, casual, and active products", () => {
+    const smartSuit = new JSDOM(
+      `
+        <!doctype html>
+        <title>Navy Slim Fit Suit Jacket</title>
+        <body><main><h1>Navy Slim Fit Suit Jacket</h1><section>Product details: Tailored slim fit suit jacket.</section><p>£120</p></main></body>
+      `,
+      { url: "https://www.next.co.uk/style/su730732/139892" }
+    );
+    const oxfordShirt = new JSDOM(
+      `
+        <!doctype html>
+        <title>Blue Oxford Shirt</title>
+        <body><main><h1>Blue Oxford Shirt</h1><section>Composition: 100% cotton.</section><p>£39</p></main></body>
+      `,
+      { url: "https://shop.example/products/blue-oxford-shirt" }
+    );
+    const graphicTee = new JSDOM(
+      `
+        <!doctype html>
+        <title>Relaxed Graphic T-Shirt</title>
+        <body><main><h1>Relaxed Graphic T-Shirt</h1><section>Composition: 100% cotton.</section><p>£19</p></main></body>
+      `,
+      { url: "https://shop.example/products/relaxed-graphic-t-shirt" }
+    );
+    const runningTrainer = new JSDOM(
+      `
+        <!doctype html>
+        <title>Performance Running Trainer</title>
+        <body><main><h1>Performance Running Trainer</h1><section>Upper: synthetic mesh.</section><p>£75</p></main></body>
+      `,
+      { url: "https://shop.example/products/performance-running-trainer" }
+    );
+
+    const smartClassification = classifyProductEvidence(extractProductData(smartSuit.window.document, smartSuit.window.location));
+    const smartCasualClassification = classifyProductEvidence(extractProductData(oxfordShirt.window.document, oxfordShirt.window.location));
+    const casualClassification = classifyProductEvidence(extractProductData(graphicTee.window.document, graphicTee.window.location));
+    const activeClassification = classifyProductEvidence(extractProductData(runningTrainer.window.document, runningTrainer.window.location));
+
+    expect(smartClassification.category).toBe("outerwear");
+    expect(smartClassification.style_tags).toContain("smart");
+    expect(smartClassification.style_tags).not.toContain("smart casual");
+    expect(smartClassification.use_case).toBe("formal / office");
+
+    expect(smartCasualClassification.category).toBe("shirt");
+    expect(smartCasualClassification.style_tags).toContain("smart casual");
+    expect(smartCasualClassification.style_tags).not.toContain("smart");
+    expect(smartCasualClassification.use_case).toBe("office casual");
+
+    expect(casualClassification.style_tags).toContain("casual");
+    expect(activeClassification.style_tags).toContain("active");
+  });
+
+  it("creates a bounded stage 4 backend payload", () => {
     const dom = new JSDOM(
       `
         <!doctype html>
@@ -555,8 +923,10 @@ describe("page snapshot helpers", () => {
     expect(snapshot.url).toBe("https://example.com/products/test");
     expect(snapshot.title).toBe("Test Product");
     expect(snapshot.visibleText.length).toBeLessThanOrEqual(7000);
-    expect(payload.extension.stage).toBe("stage_2");
+    expect(payload.extension.stage).toBe("stage_4");
+    expect(payload.extension.version).toBe("0.4.0");
     expect(payload.page).toBe(snapshot);
+    expect(payload.classification.source_confidence_label).toBe("low");
   });
 
   it("collects JSON-LD and image URLs from multiple source types", () => {
