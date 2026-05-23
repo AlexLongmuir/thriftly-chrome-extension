@@ -1,7 +1,15 @@
 import { useMemo, useState } from "react";
 import { submitQualityCheck } from "../api/client";
 import { classifyProductEvidence } from "../shared/classification";
-import type { ActiveTabExtraction, BackendVerdict, ProductClassification, ProductFieldName } from "../shared/messages";
+import type {
+  ActiveTabExtraction,
+  BackendVerdict,
+  DimensionVerdict,
+  MatchedApprovedExample,
+  ProductClassification,
+  ProductFieldName,
+  Stage6Verdict
+} from "../shared/messages";
 import { createBackendPayload } from "../shared/pageSnapshot";
 import { createVisualEnrichment } from "../shared/visualEnrichment";
 import { requestActiveTabExtraction } from "./chromeApi";
@@ -17,7 +25,7 @@ export function App() {
   const statusLabel = useMemo(() => {
     if (status === "extracting") return "Reading active tab";
     if (status === "sending") return "Sending extraction payload";
-    if (status === "complete") return "Stage 5 ready";
+    if (status === "complete") return "Verdict ready";
     if (status === "error") return "Needs attention";
     return "Ready";
   }, [status]);
@@ -55,14 +63,14 @@ export function App() {
       <header className="panel-header">
         <div>
           <p className="eyebrow">Quality Check</p>
-          <h1>Visual enrichment test</h1>
+          <h1>Quality verdict</h1>
         </div>
         <span className={`status-pill status-pill--${status}`}>{statusLabel}</span>
       </header>
 
       <section className="primary-panel">
         <p className="panel-copy">
-          Extract product evidence from the active tab, classify it, and prepare a guarded visual-enrichment request from product images.
+          Extract product evidence from the active tab, run guarded visual enrichment, and return an evidence-labelled Stage 6 verdict.
         </p>
         <button className="primary-button" type="button" onClick={handleRunCheck} disabled={status === "extracting" || status === "sending"}>
           {status === "extracting" || status === "sending" ? "Checking..." : "Run page check"}
@@ -176,32 +184,20 @@ export function App() {
           <p>{verdict.summary}</p>
           {verdict.analysis ? (
             <>
+              <Stage6VerdictPanel verdict={verdict.analysis.verdict} approvedExamples={verdict.analysis.approved_examples} />
               <div className="classification-grid">
                 <Metric label="Stage" value={verdict.analysis.stage} />
                 <Metric label="Status" value={verdict.analysis.status} />
-                <Metric label="Vision" value={verdict.analysis.visual_enrichment.model} />
-                <Metric label="Observations" value={String(verdict.analysis.visual_enrichment.observations.length)} />
+                <Metric label="Analysis model" value={verdict.analysis.verdict.model} />
+                <Metric label="Model status" value={formatLabel(verdict.analysis.verdict.model_status)} />
               </div>
-              <ClassificationList
-                title="Diagnostic visual cues"
-                items={verdict.analysis.visual_enrichment.visual_cues.map((cue) =>
-                  `${cue.cue} (${cue.confidence}, ${cue.evidence_type})`
-                )}
-                emptyLabel="None"
-              />
-              <ClassificationList
-                title="Backend visual observations"
-                items={verdict.analysis.visual_enrichment.observations.map((observation) =>
-                  `${observation.observation} (${observation.confidence}, ${observation.evidence_type})`
-                )}
-                emptyLabel="None"
-              />
-              <ClassificationList title="Missing image views" items={verdict.analysis.visual_enrichment.missing_views} emptyLabel="None" />
-              <ClassificationList title="Image limits" items={verdict.analysis.visual_enrichment.image_quality_limits} emptyLabel="None" />
+              <Stage5VisualPanel verdict={verdict} />
               <ClassificationList title="Backend warnings" items={verdict.analysis.visual_enrichment.warnings} emptyLabel="None" />
+              <ClassificationList title="Reasoning flags" items={verdict.analysis.verdict.reasoning_flags.map(formatLabel)} emptyLabel="None" />
+              <ClassificationList title="Matched examples" items={verdict.analysis.verdict.matched_examples} emptyLabel="None" />
             </>
           ) : null}
-          <dl className="details-list">
+          <dl className="details-list response-meta">
             <div>
               <dt>Source</dt>
               <dd>{verdict.source}</dd>
@@ -214,6 +210,87 @@ export function App() {
         </section>
       ) : null}
     </main>
+  );
+}
+
+function Stage6VerdictPanel({ verdict, approvedExamples }: { verdict: Stage6Verdict; approvedExamples: MatchedApprovedExample[] }) {
+  return (
+    <div className="verdict-panel">
+      <div className="verdict-hero">
+        <div>
+          <span className={`recommendation recommendation--${verdict.recommendation}`}>{formatLabel(verdict.recommendation)}</span>
+          <strong>{verdict.overall_rating.toFixed(1)}/10</strong>
+        </div>
+        <p>{verdict.recommendation_summary}</p>
+      </div>
+
+      <div className="score-grid">
+        <ScoreMeter label="Quality" value={verdict.scores.quality} max={10} />
+        <ScoreMeter label="Value" value={verdict.scores.value} max={10} />
+        <ScoreMeter label="Durability" value={verdict.scores.durability} max={10} />
+        <ScoreMeter label="Aesthetic" value={verdict.scores.aesthetic} max={10} />
+        <ScoreMeter label="Confidence" value={verdict.scores.confidence} max={1} />
+      </div>
+
+      <div className="verdict-grid">
+        <DimensionVerdictBlock title="Quality" score={verdict.scores.quality} verdict={verdict.verdicts.quality} />
+        <DimensionVerdictBlock title="Value" score={verdict.scores.value} verdict={verdict.verdicts.value} />
+        <DimensionVerdictBlock title="Durability" score={verdict.scores.durability} verdict={verdict.verdicts.durability} />
+        <DimensionVerdictBlock title="Aesthetic" score={verdict.scores.aesthetic} verdict={verdict.verdicts.aesthetic} />
+      </div>
+
+      <ClassificationList
+        title="Approved-example anchors"
+        items={approvedExamples.map(
+          (example) =>
+            `${example.id} · ${example.category}/${example.material_family}/${example.brand_tier} · similarity ${example.similarity.toFixed(2)}`
+        )}
+        emptyLabel="None"
+      />
+      <p className="verdict-summary">{verdict.summary}</p>
+    </div>
+  );
+}
+
+function Stage5VisualPanel({ verdict }: { verdict: BackendVerdict }) {
+  const visual = verdict.analysis?.visual_enrichment;
+  if (!visual) return null;
+
+  return (
+    <div className="stage-panel">
+      <div className="section-heading-row">
+        <h3>Stage 5 visual response</h3>
+        <span className="section-pill">{visual.status}</span>
+      </div>
+      <div className="classification-grid">
+        <Metric label="Vision model" value={visual.model} />
+        <Metric label="Images sent" value={String(visual.image_count)} />
+        <Metric label="Visual cues" value={String(visual.visual_cues.length)} />
+        <Metric label="Inferences" value={String(visual.expert_inferences.length)} />
+      </div>
+      <ClassificationList
+        title="Diagnostic visual cues"
+        items={visual.visual_cues.map((cue) => `${cue.cue} (${cue.confidence}, ${cue.evidence_type})`)}
+        emptyLabel="None"
+      />
+      <ClassificationList
+        title="Backend visual observations"
+        items={visual.observations.map(
+          (observation) => `${observation.observation} (${observation.confidence}, ${observation.evidence_type})`
+        )}
+        emptyLabel="None"
+      />
+      <ClassificationList
+        title="Expert visual inferences"
+        items={visual.expert_inferences.map(
+          (inference) =>
+            `${inference.inference} (${inference.confidence}, ${inference.quality_dimension}, ${inference.score_dimension}: ${inference.score_effect}) Caveat: ${inference.caveat}`
+        )}
+        emptyLabel="None"
+      />
+      <ClassificationList title="Missing image views" items={visual.missing_views} emptyLabel="None" />
+      <ClassificationList title="Image limits" items={visual.image_quality_limits} emptyLabel="None" />
+    </div>
   );
 }
 
@@ -256,6 +333,42 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
+function ScoreMeter({ label, value, max }: { label: string; value: number; max: number }) {
+  const displayValue = max === 1 ? value.toFixed(2) : value.toFixed(1);
+  const percentage = Math.max(0, Math.min(100, (value / max) * 100));
+
+  return (
+    <div className="score-meter">
+      <div>
+        <span>{label}</span>
+        <strong>
+          {displayValue}
+          <small>/{max}</small>
+        </strong>
+      </div>
+      <div className="score-track" aria-hidden="true">
+        <span style={{ width: `${percentage}%` }} />
+      </div>
+    </div>
+  );
+}
+
+function DimensionVerdictBlock({ title, score, verdict }: { title: string; score: number; verdict: DimensionVerdict }) {
+  return (
+    <div className="dimension-verdict">
+      <div>
+        <h3>
+          {title}
+          <strong>{score.toFixed(1)}/10</strong>
+        </h3>
+        <span>{verdict.confidence}</span>
+      </div>
+      <p>{verdict.verdict}</p>
+      <em>{formatLabel(verdict.evidence_type)}</em>
+    </div>
+  );
+}
+
 function ClassificationList({ title, items, emptyLabel }: { title: string; items: string[]; emptyLabel: string }) {
   return (
     <div className="classification-list">
@@ -286,4 +399,8 @@ const CLASSIFICATION_ROWS: Array<[string, (classification: ProductClassification
 function formatFieldValue(value: string | string[] | null): string {
   if (Array.isArray(value)) return value.length ? value.join(" › ") : "Not found";
   return value || "Not found";
+}
+
+function formatLabel(value: string): string {
+  return value.replace(/_/g, " ");
 }

@@ -19,7 +19,7 @@ describe("quality-check API", () => {
       requestId: "request-no-images",
       source: "backend",
       analysis: {
-        status: "skipped",
+        status: "completed",
         visual_enrichment: {
           status: "skipped",
           image_count: 0,
@@ -364,14 +364,14 @@ describe("quality-check API", () => {
       }
     });
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       requestId: "request-stable",
-      summary: 'Stage 5 visual enrichment completed for "Merino Jumper" with 1 guarded observation(s).',
+      summary: 'Stage 6 verdict completed for "Merino Jumper": buy (7.1/10).',
       receivedUrl: "https://shop.example/products/merino-jumper",
       source: "backend",
       capturedTitle: "Merino Jumper",
       analysis: {
-        stage: "stage_5",
+        stage: "stage_6",
         status: "completed",
         product: {
           title: "Merino Jumper",
@@ -415,28 +415,148 @@ describe("quality-check API", () => {
           ],
           missing_views: ["seam close-up"],
           image_quality_limits: ["studio lighting"],
-          warnings: [
+          warnings: expect.arrayContaining([
             "vision observations are enrichment only",
             "expert visual inferences must be caveated and low/medium confidence unless directly visible",
-            "do not assert fabric authenticity, exact construction method, or durability from images alone"
-          ]
+            "do not assert fabric authenticity, exact construction method, or durability from images alone",
+            "OPENAI_API_KEY is not configured; Stage 6 core analysis is disabled."
+          ])
         },
-        model_config: {
-          vision_model: "gemini-3.0-flash",
-          core_model: "gpt-5.4-mini",
-          premium_fallback_model: "gpt-5.4",
-          embedding_model: "text-embedding-3-small",
-          openai_configured: true
-        }
+        verdict: {
+          overall_rating: 7.1,
+          recommendation: "buy",
+          scores: {
+            quality: 7.3,
+            value: 6.7,
+            durability: 6.5,
+            aesthetic: 7.6,
+            confidence: 0.86
+          },
+          confidence_label: "high",
+          matched_examples: expect.arrayContaining(["approved_merino_knit_mid_premium_001"]),
+          model: "gpt-5.4-mini",
+          model_status: "heuristic_fallback"
+        },
+        approved_examples: expect.arrayContaining([
+          expect.objectContaining({
+            id: "approved_merino_knit_mid_premium_001",
+            similarity: 0.98
+          })
+        ]),
+        model_config: expect.objectContaining({
+          openai_configured: false
+        })
       }
     });
+  });
+
+  it("keeps Stage 6 deterministic across repeat runs", async () => {
+    const payload = createPayload({ imageUrls: [] });
+    const results = await Promise.all([
+      handleQualityCheckPayload(payload, { env: testEnv(), requestId: () => "run-1" }),
+      handleQualityCheckPayload(payload, { env: testEnv(), requestId: () => "run-2" }),
+      handleQualityCheckPayload(payload, { env: testEnv(), requestId: () => "run-3" })
+    ]);
+
+    expect(results.map((result) => result.analysis?.verdict.scores)).toEqual([
+      results[0].analysis?.verdict.scores,
+      results[0].analysis?.verdict.scores,
+      results[0].analysis?.verdict.scores
+    ]);
+    expect(results.map((result) => result.analysis?.verdict.overall_rating)).toEqual([7.1, 7.1, 7.1]);
+  });
+
+  it("caps weak source data and returns not_enough_info instead of strong claims", async () => {
+    const payload = createPayload({ imageUrls: [] });
+    payload.page.product.sourceConfidenceScore = 0.28;
+    payload.page.product.source_confidence_score = 0.28;
+    payload.page.product.fields.materials = field(null);
+    payload.classification.material_family = "unknown";
+    payload.classification.source_confidence_score = 0.28;
+    payload.classification.source_confidence_label = "low";
+    payload.classification.quality_signals = [];
+    payload.classification.quality_concerns = [
+      "unknown: material composition not found",
+      "unknown: weak source data limits classification confidence"
+    ];
+
+    const result = await handleQualityCheckPayload(payload, {
+      env: testEnv(),
+      requestId: () => "weak-source"
+    });
+
+    expect(result.analysis?.verdict).toMatchObject({
+      recommendation: "not_enough_info",
+      confidence_label: "low",
+      scores: expect.objectContaining({
+        confidence: 0.28
+      }),
+      verdicts: {
+        quality: expect.objectContaining({
+          evidence_type: "unknown",
+          confidence: "low"
+        })
+      }
+    });
+    expect(result.analysis?.verdict.reasoning_flags).toEqual(
+      expect.arrayContaining(["material_composition_not_found", "weak_source_data"])
+    );
+    expect(result.analysis?.verdict.overall_rating).toBeLessThanOrEqual(5.2);
+  });
+
+  it("uses GPT-5.4-mini verdict output but clamps scores and confidence to Stage 6 guardrails", async () => {
+    const result = await handleQualityCheckPayload(createPayload({ imageUrls: [] }), {
+      env: testEnv({ OPENAI_API_KEY: "test-openai-key" }),
+      requestId: () => "model-clamped",
+      fetcher: async (input) => {
+        expect(String(input)).toBe("https://api.openai.com/v1/responses");
+        return Response.json({
+          output_text: JSON.stringify({
+            overall_rating: 9.9,
+            recommendation: "strong_buy",
+            recommendation_summary: "Model tried to overstate the item.",
+            scores: {
+              quality: 10,
+              value: 10,
+              durability: 10,
+              aesthetic: 10,
+              confidence: 1
+            },
+            confidence_label: "high",
+            verdicts: {
+              quality: { verdict: "Strong stated material signal.", confidence: "high", evidence_type: "stated_on_page" },
+              value: { verdict: "Consistent with approved examples.", confidence: "high", evidence_type: "similar_approved_example" },
+              durability: { verdict: "Will last for years.", confidence: "high", evidence_type: "general_material_knowledge" },
+              aesthetic: { verdict: "Clean product image.", confidence: "high", evidence_type: "inferred_from_image" }
+            },
+            reasoning_flags: [],
+            matched_examples: ["wrong_example"],
+            summary: "Overconfident model output."
+          })
+        });
+      }
+    });
+
+    expect(result.analysis?.verdict).toMatchObject({
+      model_status: "model_completed",
+      model: "gpt-5.4-mini",
+      scores: {
+        quality: 8.5,
+        value: 8,
+        durability: 7.6,
+        aesthetic: 8.8,
+        confidence: 0.86
+      },
+      matched_examples: expect.arrayContaining(["approved_merino_knit_mid_premium_001"])
+    });
+    expect(result.analysis?.verdict.overall_rating).toBe(8.2);
   });
 });
 
 function testEnv(overrides: Record<string, string> = {}) {
   return {
     GEMINI_API_KEY: "test-gemini-key",
-    OPENAI_API_KEY: "test-openai-key",
+    OPENAI_API_KEY: "",
     QUALITY_CHECK_VISION_MODEL: "gemini-3.0-flash",
     QUALITY_CHECK_CORE_MODEL: "gpt-5.4-mini",
     QUALITY_CHECK_PREMIUM_FALLBACK_MODEL: "gpt-5.4",

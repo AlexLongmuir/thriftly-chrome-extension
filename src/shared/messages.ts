@@ -235,6 +235,69 @@ export type BackendPayload = {
   };
 };
 
+export type VerdictEvidenceType =
+  | "stated_on_page"
+  | "inferred_from_material"
+  | "inferred_from_image"
+  | "general_material_knowledge"
+  | "similar_approved_example"
+  | "unknown";
+
+export type Recommendation =
+  | "strong_buy"
+  | "buy"
+  | "consider"
+  | "reconsider"
+  | "overpriced"
+  | "avoid"
+  | "not_enough_info";
+
+export type VerdictConfidence = "high" | "medium" | "low";
+
+export type VerdictScores = {
+  quality: number;
+  value: number;
+  durability: number;
+  aesthetic: number;
+  confidence: number;
+};
+
+export type DimensionVerdict = {
+  verdict: string;
+  confidence: VerdictConfidence;
+  evidence_type: VerdictEvidenceType;
+};
+
+export type MatchedApprovedExample = {
+  id: string;
+  category: ProductCategory;
+  material_family: MaterialFamily;
+  brand_tier: BrandTier;
+  price_band: string;
+  similarity: number;
+  expected_scores: VerdictScores;
+  recommendation: Recommendation;
+};
+
+export type Stage6Verdict = {
+  overall_rating: number;
+  recommendation: Recommendation;
+  recommendation_summary: string;
+  scores: VerdictScores;
+  confidence_label: VerdictConfidence;
+  verdicts: {
+    quality: DimensionVerdict;
+    value: DimensionVerdict;
+    durability: DimensionVerdict;
+    aesthetic: DimensionVerdict;
+  };
+  reasoning_flags: string[];
+  matched_examples: string[];
+  summary: string;
+  model: string;
+  model_status: "model_completed" | "heuristic_fallback" | "model_unavailable";
+};
+
 export type BackendVisualEnrichmentResult = {
   status: "completed" | "skipped";
   model: string;
@@ -248,7 +311,7 @@ export type BackendVisualEnrichmentResult = {
 };
 
 export type BackendAnalysis = {
-  stage: "stage_5";
+  stage: "stage_6";
   status: "completed" | "skipped";
   product: {
     title: string;
@@ -259,6 +322,8 @@ export type BackendAnalysis = {
   };
   classification: ProductClassification;
   visual_enrichment: BackendVisualEnrichmentResult;
+  verdict: Stage6Verdict;
+  approved_examples: MatchedApprovedExample[];
   model_config: {
     vision_model: string;
     core_model: string;

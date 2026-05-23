@@ -29,12 +29,12 @@ function createMockVerdict(payload: BackendPayload): BackendVerdict {
 
   return {
     requestId: `mock-${Date.now()}`,
-    summary: `Stage 5 payload prepared for "${title}" as ${payload.classification.category} / ${payload.classification.material_family} with ${payload.classification.source_confidence_label} source confidence (${confidence}). Visual enrichment ${payload.visual_enrichment.status} with ${payload.visual_enrichment.image_urls.length} image(s).`,
+    summary: `Stage 6 local verdict prepared for "${title}" as ${payload.classification.category} / ${payload.classification.material_family} with ${payload.classification.source_confidence_label} source confidence (${confidence}).`,
     receivedUrl: payload.page.url,
     source: "mock",
     capturedTitle: title,
     analysis: {
-      stage: "stage_5",
+      stage: "stage_6",
       status: payload.visual_enrichment.status === "requested" ? "skipped" : "skipped",
       product: {
         title,
@@ -55,6 +55,48 @@ function createMockVerdict(payload: BackendPayload): BackendVerdict {
         image_quality_limits: [],
         warnings: ["mock response: backend API URL is not configured"]
       },
+      verdict: {
+        overall_rating: confidence < 0.45 ? 4.2 : 6.2,
+        recommendation: confidence < 0.45 ? "not_enough_info" : "consider",
+        recommendation_summary:
+          confidence < 0.45 ? "Not enough trustworthy product evidence to make a buying call." : "Local mock verdict; backend is not configured.",
+        scores: {
+          quality: confidence < 0.45 ? 3.8 : 6.2,
+          value: confidence < 0.45 ? 3.8 : 6.0,
+          durability: confidence < 0.45 ? 3.8 : 6.0,
+          aesthetic: confidence < 0.45 ? 4.5 : 6.2,
+          confidence
+        },
+        confidence_label: payload.classification.source_confidence_label,
+        verdicts: {
+          quality: {
+            verdict: "Mock verdict only; configure the backend for Stage 6 scoring.",
+            confidence: payload.classification.source_confidence_label,
+            evidence_type: "unknown"
+          },
+          value: {
+            verdict: "Mock verdict only; approved-example anchors run on the backend.",
+            confidence: payload.classification.source_confidence_label,
+            evidence_type: "unknown"
+          },
+          durability: {
+            verdict: "Mock verdict only; durability is not analysed locally.",
+            confidence: payload.classification.source_confidence_label,
+            evidence_type: "unknown"
+          },
+          aesthetic: {
+            verdict: "Mock verdict only; visual enrichment runs on the backend.",
+            confidence: payload.classification.source_confidence_label,
+            evidence_type: "unknown"
+          }
+        },
+        reasoning_flags: ["mock_backend_not_configured"],
+        matched_examples: [],
+        summary: "Backend API URL is not configured.",
+        model: "gpt-5.4-mini",
+        model_status: "model_unavailable"
+      },
+      approved_examples: [],
       model_config: {
         vision_model: payload.visual_enrichment.model,
         core_model: "gpt-5.4-mini",

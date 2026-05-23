@@ -9,6 +9,7 @@
   "scripts": {
     "build": "tsc --noEmit && vite build",
     "dev": "vite --host 127.0.0.1",
+    "audit:url-set": "vite-node scripts/audit-url-set.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
