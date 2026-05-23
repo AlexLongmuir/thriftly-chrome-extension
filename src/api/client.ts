@@ -44,6 +44,7 @@ function createMockVerdict(payload: BackendPayload): BackendVerdict {
         source_confidence_label: payload.classification.source_confidence_label
       },
       classification: payload.classification,
+      public_evidence: [],
       visual_enrichment: {
         status: "skipped",
         model: payload.visual_enrichment.model,
@@ -92,6 +93,7 @@ function createMockVerdict(payload: BackendPayload): BackendVerdict {
         },
         reasoning_flags: ["mock_backend_not_configured"],
         matched_examples: [],
+        evidence_score_effects: [],
         summary: "Backend API URL is not configured.",
         model: "gpt-5.4-mini",
         model_status: "model_unavailable"

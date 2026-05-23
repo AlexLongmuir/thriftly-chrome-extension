@@ -54,6 +54,9 @@ export type ProductFieldName =
   | "construction"
   | "origin"
   | "sizing"
+  | "onSiteRating"
+  | "onSiteReviewCount"
+  | "reviewClaims"
   | "categoryBreadcrumbs";
 
 export type EvidenceSource =
@@ -140,6 +143,44 @@ export type ProductClassification = {
   source_confidence_score: number;
   source_confidence_label: SourceConfidenceLabel;
   labelled_inferences: LabelledInference[];
+};
+
+export type PublicEvidenceSourceType =
+  | "official"
+  | "customer_review"
+  | "expert_review"
+  | "forum"
+  | "retailer"
+  | "brand_background";
+
+export type PublicEvidenceSpecificity =
+  | "exact_product"
+  | "same_line"
+  | "same_brand_category"
+  | "brand_general";
+
+export type PublicEvidenceDimension =
+  | "quality"
+  | "fabric"
+  | "fit"
+  | "sizing"
+  | "durability"
+  | "value"
+  | "aesthetic"
+  | "risk";
+
+export type PublicEvidenceSentiment = "positive" | "negative" | "mixed" | "neutral";
+
+export type PublicEvidenceItem = {
+  sourceType: PublicEvidenceSourceType;
+  specificity: PublicEvidenceSpecificity;
+  dimension: PublicEvidenceDimension;
+  claim: string;
+  sentiment: PublicEvidenceSentiment;
+  confidence: number;
+  url: string;
+  quote?: string;
+  date?: string;
 };
 
 export type VisualObservationConfidence = "high" | "medium" | "low";
@@ -293,6 +334,7 @@ export type Stage6Verdict = {
   };
   reasoning_flags: string[];
   matched_examples: string[];
+  evidence_score_effects: string[];
   summary: string;
   model: string;
   model_status: "model_completed" | "heuristic_fallback" | "model_unavailable";
@@ -321,6 +363,7 @@ export type BackendAnalysis = {
     source_confidence_label: SourceConfidenceLabel;
   };
   classification: ProductClassification;
+  public_evidence: PublicEvidenceItem[];
   visual_enrichment: BackendVisualEnrichmentResult;
   verdict: Stage6Verdict;
   approved_examples: MatchedApprovedExample[];

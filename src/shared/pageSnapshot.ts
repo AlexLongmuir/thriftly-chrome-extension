@@ -30,6 +30,9 @@ const FIELD_NAMES: ProductFieldName[] = [
   "construction",
   "origin",
   "sizing",
+  "onSiteRating",
+  "onSiteReviewCount",
+  "reviewClaims",
   "categoryBreadcrumbs"
 ];
 
@@ -39,6 +42,7 @@ const ACCUMULATING_FIELDS = new Set<ProductFieldName>([
   "construction",
   "origin",
   "sizing",
+  "reviewClaims",
   "categoryBreadcrumbs"
 ]);
 
@@ -60,6 +64,8 @@ const TARGETED_KEYWORDS = [
   "fit",
   "size",
   "sizing",
+  "review",
+  "rating",
   "product information",
   "product details"
 ];
@@ -97,7 +103,8 @@ const FIELD_NOISE_PATTERN =
   /\b(add to cart|add to bag|add to wishlist|delivery|click & collect|free home delivery|in stock|out of stock|reviews?|rating|stars?|returns?|newsletter|sign in|checkout)\b/i;
 
 const MATERIAL_EVIDENCE_PATTERNS = [
-  /\b\d{1,3}%\s+(?:organic\s+|recycled\s+|responsible\s+|rws\s+|merino\s+)?(?:wool|cotton|linen|cashmere|silk|leather|polyester|polyamide|nylon|viscose|elastane|acrylic|sheep leather|lamb leather|fibres?)\b/i,
+  /\b\d{1,3}%\s+(?:organic\s+|recycled\s+|responsible\s+|rws\s+|merino\s+)?(?:wool|cotton|linen|cashmere|silk|leather|polyester|polyamide|nylon|viscose|elastane|acrylic|sheep leather|lamb leather|fibres?)(?!\w)/i,
+  /\b(?:organic\s+|recycled\s+|responsible\s+|rws\s+|merino\s+)?(?:wool|cotton|linen|cashmere|silk|leather|polyester|polyamide|nylon|viscose|elastane|acrylic|sheep leather|lamb leather|fibres?)\s+\d{1,3}%(?!\w)/i,
   /\b(?:genuine|real|soft|smooth|tumbled|full[- ]grain|suede)\s+leather\b/i,
   /\b(?:merino wool|wool blend|cotton blend|linen blend|cashmere|organic cotton|recycled polyester|polyester fleece|sheep leather|lamb leather)\b/i
 ];
@@ -110,7 +117,7 @@ const CARE_EVIDENCE_PATTERNS = [
 ];
 
 const CONSTRUCTION_EVIDENCE_PATTERNS = [
-  /\b(?:cupsole|lace-up|zip closure|button[- ]down|full collar|ribbed(?: knit| trims?)?|fine[- ]gauge|heavy[- ]knit|plain stitch|perforations|stain guard|freshfeet)[^.]*\.?/i
+  /\b(?:cupsole|lace-up|zip closure|button[- ]down|full collar|ribbed(?: knit| trims?)?|fine[- ]gauge|heavy[- ]knit|plain stitch|perforations|stain guard|freshfeet|shell buttons?|box pleat|locker loop|back collar button|pleated cuffs?|front placket)[^.]*\.?/i
 ];
 
 type Candidate = {
@@ -272,6 +279,10 @@ function collectJsonLdProductCandidates(jsonLd: unknown[]): Partial<Record<Produ
     add("materials", extractPatternEvidence(stringValue(product.description), MATERIAL_EVIDENCE_PATTERNS), 0.68, "description material evidence");
     add("care", extractPatternEvidence(stringValue(product.description), CARE_EVIDENCE_PATTERNS), 0.66, "description care evidence");
     add("construction", extractPatternEvidence(stringValue(product.description), CONSTRUCTION_EVIDENCE_PATTERNS), 0.58, "description construction evidence");
+    add("origin", extractOriginBlock(stringValue(product.description) || ""), 0.68, "description origin evidence");
+    add("onSiteRating", nestedString(product.aggregateRating, ["ratingValue"]), 0.84, "aggregateRating.ratingValue");
+    add("onSiteReviewCount", nestedString(product.aggregateRating, ["reviewCount", "ratingCount"]), 0.84, "aggregateRating.reviewCount");
+    add("reviewClaims", collectReviewClaims(product.review), 0.72, "reviews");
     add("categoryBreadcrumbs", collectCategoryValues(product), 0.82, "category");
 
     const offer = Array.isArray(product.offers) ? product.offers[0] : product.offers;
@@ -334,6 +345,7 @@ function collectMetaCandidates(meta: Record<string, string>): Partial<Record<Pro
   add("materials", extractPatternEvidence(pickMeta(meta, ["og:description", "description", "twitter:description"]), MATERIAL_EVIDENCE_PATTERNS), 0.54, "description material evidence");
   add("care", extractPatternEvidence(pickMeta(meta, ["og:description", "description", "twitter:description"]), CARE_EVIDENCE_PATTERNS), 0.52, "description care evidence");
   add("brand", pickMeta(meta, ["product:brand", "brand"]), 0.76, "brand");
+  add("brand", pickMeta(meta, ["og:site_name", "application-name", "apple-mobile-web-app-title"]), 0.68, "site brand");
   add(
     "price",
     pickMeta(meta, ["product:sale_price:amount", "og:sale_price:amount", "sale_price", "product:price:amount", "og:price:amount", "price", "twitter:data1"]),
@@ -351,10 +363,23 @@ function extractPatternEvidence(value: string | null, patterns: RegExp[]): strin
 
   for (const pattern of patterns) {
     const match = value.match(pattern);
-    if (match?.[0]) return normaliseWhitespace(match[0]);
+    if (match?.[0]) return normaliseComposition(normaliseWhitespace(match[0]));
   }
 
   return null;
+}
+
+function normaliseComposition(value: string): string {
+  const reverse = value.match(/^(organic\s+|recycled\s+|responsible\s+|rws\s+|merino\s+)?(wool|cotton|linen|cashmere|silk|leather|polyester|polyamide|nylon|viscose|elastane|acrylic|sheep leather|lamb leather|fibres?)\s+(\d{1,3})%$/i);
+  if (!reverse) return value;
+  return `${titleCase(`${reverse[1] || ""}${reverse[2]}`.trim())} ${reverse[3]}%`;
+}
+
+function titleCase(value: string): string {
+  return value
+    .split(/\s+/)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(" ");
 }
 
 function pickMeta(meta: Record<string, string>, keys: string[]): string | null {
@@ -477,8 +502,13 @@ function collectDomCandidates(snippets: EvidenceSnippet[]): Partial<Record<Produ
     add("care", extractLineAfterLabel(text, ["care", "care guide", "washing", "wash"]), 0.58, [label]);
     add("colour", extractColourFromText(text), 0.7, [label]);
     add("construction", extractConstructionSection(text), 0.66, [label]);
+    add("construction", extractIvyConstructionSignals(text), 0.72, [label]);
     add("origin", extractLineAfterLabel(text, ["made in", "origin", "imported"]), 0.66, [label]);
+    add("origin", extractOriginBlock(text), 0.72, [label]);
     add("sizing", extractSizingSection(text), 0.66, [label]);
+    add("onSiteRating", extractRatingValue(text), 0.68, [label]);
+    add("onSiteReviewCount", extractReviewCount(text), 0.68, [label]);
+    add("reviewClaims", extractReviewClaims(text), 0.58, [label]);
     add("description", extractDescriptionFromSnippet(text), 0.58, [label]);
     add("materials", extractPatternEvidence(text, MATERIAL_EVIDENCE_PATTERNS), 0.56, [label]);
     add("construction", extractPatternEvidence(text, CONSTRUCTION_EVIDENCE_PATTERNS), 0.5, [label]);
@@ -512,7 +542,11 @@ function collectInteractiveDisclosureCandidates(snippets: EvidenceSnippet[]): Pa
     add("origin", extractOriginBlock(labelAndText), 0.8, [label]);
     add("sizing", extractSizingSection(labelAndText), 0.78, [label]);
     add("construction", extractConstructionSection(labelAndText), 0.78, [label]);
+    add("construction", extractIvyConstructionSignals(labelAndText), 0.8, [label]);
     add("colour", extractColourFromDescription(labelAndText), 0.74, [label]);
+    add("onSiteRating", extractRatingValue(labelAndText), 0.7, [label]);
+    add("onSiteReviewCount", extractReviewCount(labelAndText), 0.7, [label]);
+    add("reviewClaims", extractReviewClaims(labelAndText), 0.6, [label]);
   }
 
   return candidates;
@@ -707,6 +741,8 @@ function collectHydrationCandidates(snippets: EvidenceSnippet[]): Partial<Record
     add("description", extractJsonishString(text, ["description", "shortDescription"]), 0.72, [label]);
     add("materials", extractJsonishString(text, ["material", "materials", "composition", "fabric"]), 0.76, [label]);
     add("care", extractJsonishString(text, ["care", "careInstructions", "washCare"]), 0.72, [label]);
+    add("onSiteRating", extractJsonishString(text, ["ratingValue", "rating", "averageRating"]), 0.7, [label]);
+    add("onSiteReviewCount", extractJsonishString(text, ["reviewCount", "ratingCount", "reviewsCount"]), 0.7, [label]);
   }
 
   return candidates;
@@ -800,7 +836,11 @@ function collectStructuredScriptCandidates(documentRef: Document): Partial<Recor
       add("materials", material, 0.82, `${label} product material/composition`);
       add("care", care, 0.78, `${label} product care`);
       add("construction", extractPatternEvidence(description, CONSTRUCTION_EVIDENCE_PATTERNS), 0.62, `${label} construction evidence`);
+      add("construction", extractIvyConstructionSignals(description || ""), 0.66, `${label} construction evidence`);
       add("origin", firstString(record.countryOfOrigin, record.madeIn, record.origin, parseOriginValue(record.var_compliance_details_key)), 0.68, `${label} origin`);
+      add("onSiteRating", firstString(record.ratingValue, record.averageRating, nestedString(record.aggregateRating, ["ratingValue"])), 0.72, `${label} rating`);
+      add("onSiteReviewCount", firstString(record.reviewCount, record.ratingCount, nestedString(record.aggregateRating, ["reviewCount", "ratingCount"])), 0.72, `${label} review count`);
+      add("reviewClaims", collectReviewClaims(record.review), 0.66, `${label} reviews`);
       add("sizing", sizing.length > 0 ? sizing : null, 0.68, `${label} fit/sizing`);
       add("categoryBreadcrumbs", categories.length > 0 ? categories : null, 0.68, `${label} category`);
     }
@@ -929,6 +969,53 @@ function parseOriginValue(value: unknown): string | null {
   }
 }
 
+function collectReviewClaims(value: unknown): string[] | null {
+  const records = flattenObjectRecords(value);
+  const claims = uniqueStrings(
+    records
+      .map((record) => firstString(record.reviewBody, record.description, record.name))
+      .filter((claim): claim is string => Boolean(claim))
+      .filter((claim) => /(quality|fabric|material|fit|size|sizing|durable|buttons?|collar|shirt|soft|comfortable|well made|made)/i.test(claim))
+      .map((claim) => claim.slice(0, 220))
+  );
+  return claims.length > 0 ? claims.slice(0, 4) : null;
+}
+
+function extractIvyConstructionSignals(text: string): string | null {
+  const signals = uniqueStrings(
+    [
+      "shell buttons",
+      "box pleat",
+      "locker loop",
+      "back collar button",
+      "pleated cuffs",
+      "front placket"
+    ].filter((signal) => new RegExp(`\\b${signal.replace(/\s+/g, "\\s+")}\\b`, "i").test(text))
+  );
+  return signals.length > 0 ? signals.join("; ") : null;
+}
+
+function extractRatingValue(text: string): string | null {
+  const match =
+    text.match(/\b([0-5](?:\.\d)?)\s*(?:\/\s*5|out of 5|stars?)\b/i) ||
+    text.match(/\b(?:rating|rated)\s*:?\s*([0-5](?:\.\d)?)/i);
+  return match?.[1] || null;
+}
+
+function extractReviewCount(text: string): string | null {
+  const match = text.match(/\b(\d{1,5})\s+(?:customer\s+)?reviews?\b/i) || text.match(/\breviews?\s*:?\s*(\d{1,5})\b/i);
+  return match?.[1] || null;
+}
+
+function extractReviewClaims(text: string): string[] | null {
+  const parts = splitIntoFactParts(text)
+    .filter((part) => /\b(?:review|customer|quality|fabric|material|fit|size|sizing|comfortable|well made)\b/i.test(part))
+    .filter((part) => !FIELD_NOISE_PATTERN.test(part))
+    .map((part) => part.slice(0, 220));
+  const claims = uniqueStrings(parts);
+  return claims.length > 0 ? claims.slice(0, 4) : null;
+}
+
 function extractLineAfterLabel(text: string, labels: string[]): string | null {
   const parts = splitIntoFactParts(text);
   const lowerLabels = labels.map((label) => label.toLowerCase());
@@ -1021,6 +1108,18 @@ function collectVisibleFallbackCandidates(visibleText: string, pageTitle: string
         evidence: ["document title"]
       }
     ];
+
+    const titleBrand = extractBrandFromPageTitle(pageTitle);
+    if (titleBrand) {
+      candidates.brand = [
+        {
+          value: titleBrand,
+          confidence: 0.62,
+          source: "visible_text_fallback",
+          evidence: ["document title brand suffix"]
+        }
+      ];
+    }
   }
 
   const materials = extractLineAfterLabel(visibleText, ["materials", "material", "composition", "fabric"]);
@@ -1061,6 +1160,16 @@ function collectVisibleFallbackCandidates(visibleText: string, pageTitle: string
   return candidates;
 }
 
+function extractBrandFromPageTitle(pageTitle: string): string | null {
+  const parts = pageTitle.split(/\s+[|–-]\s+/).map(normaliseWhitespace).filter(Boolean);
+  if (parts.length < 2) return null;
+  const candidate = parts.at(-1) || null;
+  if (!candidate || candidate.length > 80) return null;
+  if (/^(?:official|online store|shop|product|mens?|womens?)$/i.test(candidate)) return null;
+  if (!/\b(?:shirts?|shop|store|official|company|co\.?|brand)\b/i.test(candidate)) return null;
+  return candidate;
+}
+
 function collectUrlCandidates(locationRef: Location): Partial<Record<ProductFieldName, Candidate[]>> {
   const candidates: Partial<Record<ProductFieldName, Candidate[]>> = {};
 
@@ -1077,6 +1186,18 @@ function collectUrlCandidates(locationRef: Location): Partial<Record<ProductFiel
         }
       ];
     }
+  }
+
+  const host = locationRef.hostname.toLowerCase();
+  if (host.includes("kamakurashirts.com")) {
+    candidates.brand = [
+      {
+        value: "Kamakura Shirts",
+        confidence: 0.78,
+        source: "dom_targeted",
+        evidence: ["site domain brand"]
+      }
+    ];
   }
 
   return candidates;
@@ -1159,7 +1280,7 @@ function mergeCandidates(groups: Array<Partial<Record<ProductFieldName, Candidat
     if (merged) fields[field] = merged;
   }
 
-  if (fields.brand.value && typeof fields.brand.value === "string" && BAD_BRAND_VALUES.has(fields.brand.value.toLowerCase())) {
+  if (fields.brand.value && typeof fields.brand.value === "string" && isBadBrandValue(fields.brand.value)) {
     fields.brand = {
       value: null,
       confidence: 0,
@@ -1178,6 +1299,14 @@ function mergeCandidates(groups: Array<Partial<Record<ProductFieldName, Candidat
   }
 
   return fields;
+}
+
+function isBadBrandValue(value: string): boolean {
+  const cleaned = value.trim().toLowerCase();
+  if (BAD_BRAND_VALUES.has(cleaned)) return true;
+  if (/^[a-z]{0,4}\d{2,}[a-z0-9-]*$/i.test(value.trim())) return true;
+  if (/^[a-z]{2,}\d{2,}$/i.test(value.trim())) return true;
+  return false;
 }
 
 function mergeFieldCandidates(field: ProductFieldName, candidates: Candidate[]): ExtractedField | null {
@@ -1275,6 +1404,7 @@ function sanitizeFieldValue(field: ProductFieldName, value: string | string[] | 
     return price;
   }
   if (field === "colour") return cleaned.replace(/^\d{1,4}\s+/, "").slice(0, 120);
+  if (field === "brand" && isBadBrandValue(cleaned)) return null;
   return cleaned.slice(0, 1000);
 }
 

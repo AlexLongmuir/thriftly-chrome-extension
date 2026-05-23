@@ -83,6 +83,70 @@ describe("page snapshot helpers", () => {
     expect(product.imageUrls).toContain("https://www.example.com/jumper-side.jpg");
   });
 
+  it("normalises Kamakura WQGS04 facts instead of treating SKU and compact facts as missing", () => {
+    const dom = new JSDOM(
+      `
+        <!doctype html>
+        <title>Vintage Ivy Oxford Button Down Shirt WQGS04 | Kamakura Shirts</title>
+        <meta property="og:site_name" content="Kamakura Shirts">
+        <script type="application/ld+json">
+          {
+            "@context": "https://schema.org",
+            "@type": "Product",
+            "name": "Vintage Ivy Oxford Button Down Shirt WQGS04",
+            "brand": {"@type": "Brand", "name": "WQGS04"},
+            "description": "Cotton 100%. Made in Japan. Shell buttons, box pleat, locker loop, back collar button, pleated cuffs and front placket.",
+            "aggregateRating": {"@type": "AggregateRating", "ratingValue": "5.0", "reviewCount": "3"},
+            "offers": {"@type": "Offer", "price": "120", "priceCurrency": "GBP"}
+          }
+        </script>
+        <body>
+          <main>
+            <h1>Vintage Ivy Oxford Button Down Shirt WQGS04</h1>
+            <section class="product-details">
+              Composition Cotton 100%
+              Made in Japan
+              Shell buttons
+              Box pleat
+              Locker loop
+              Back collar button
+              Pleated cuffs
+              Front placket
+            </section>
+            <section class="reviews">Rated 5.0 out of 5 stars. 3 reviews. Customers mention the fabric quality and classic fit.</section>
+          </main>
+        </body>
+      `,
+      { url: "https://kamakurashirts.com/products/wqgs04" }
+    );
+
+    const product = extractProductData(dom.window.document, dom.window.location);
+    const classification = classifyProductEvidence(product);
+
+    expect(product.fields.brand.value).toBe("Kamakura Shirts");
+    expect(product.fields.materials.value).toContain("Cotton 100%");
+    expect(product.fields.origin.value).toContain("Made in Japan");
+    expect(product.fields.construction.value).toEqual(expect.stringContaining("shell buttons"));
+    expect(product.fields.construction.value).toEqual(expect.stringContaining("locker loop"));
+    expect(product.fields.onSiteRating.value).toBe("5.0");
+    expect(product.fields.onSiteReviewCount.value).toBe("3");
+    expect(classification.brand).toBe("Kamakura Shirts");
+    expect(classification.material_family).toBe("cotton");
+    expect(classification.quality_signals).toEqual(
+      expect.arrayContaining([
+        "stated on page: single-fibre natural material composition",
+        "stated on page: Made in Japan",
+        "stated on page: shell buttons",
+        "stated on page: locker loop",
+        "stated on page: back collar button",
+        "stated on page: box pleat",
+        "stated on page: 5.0/5 from 3 reviews"
+      ])
+    );
+    expect(classification.quality_concerns).not.toContain("unknown: material composition not found");
+    expect(product.warnings).not.toContain("materials/composition not found");
+  });
+
   it("extracts colour as its own field instead of folding it into care", () => {
     const dom = new JSDOM(
       `

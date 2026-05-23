@@ -3,11 +3,11 @@ import { submitQualityCheck } from "../api/client";
 import { classifyProductEvidence } from "../shared/classification";
 import type {
   ActiveTabExtraction,
+  BackendAnalysis,
   BackendVerdict,
   DimensionVerdict,
   MatchedApprovedExample,
   ProductClassification,
-  ProductFieldName,
   Stage6Verdict
 } from "../shared/messages";
 import { createBackendPayload } from "../shared/pageSnapshot";
@@ -16,19 +16,16 @@ import { requestActiveTabExtraction } from "./chromeApi";
 
 type Status = "idle" | "extracting" | "sending" | "complete" | "error";
 
+const DEFAULT_MONTHLY_WEARS = 8;
+
 export function App() {
   const [status, setStatus] = useState<Status>("idle");
+  const [monthlyWears, setMonthlyWears] = useState(DEFAULT_MONTHLY_WEARS);
   const [extraction, setExtraction] = useState<ActiveTabExtraction | null>(null);
   const [verdict, setVerdict] = useState<BackendVerdict | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [debugOpen, setDebugOpen] = useState(isLocalDebugEnvironment());
 
-  const statusLabel = useMemo(() => {
-    if (status === "extracting") return "Reading active tab";
-    if (status === "sending") return "Sending extraction payload";
-    if (status === "complete") return "Verdict ready";
-    if (status === "error") return "Needs attention";
-    return "Ready";
-  }, [status]);
   const classification = useMemo(
     () => (extraction ? classifyProductEvidence(extraction.snapshot.product) : null),
     [extraction]
@@ -37,6 +34,17 @@ export function App() {
     () => (extraction && classification ? createVisualEnrichment(extraction.snapshot.product, classification) : null),
     [classification, extraction]
   );
+  const analysis = verdict?.analysis ?? null;
+  const productTitle =
+    analysis?.product.title ||
+    getFieldValue(extraction?.snapshot.product.fields.title.value) ||
+    extraction?.snapshot.title ||
+    "No product checked yet";
+  const productBrand = analysis?.classification.brand || getFieldValue(extraction?.snapshot.product.fields.brand.value) || getDomain(extraction?.snapshot.url);
+  const productPrice = analysis?.classification.price || getFieldValue(extraction?.snapshot.product.fields.price.value);
+  const productImage = extraction?.snapshot.product.imageUrls[0] ?? null;
+  const statusLabel = statusLabels[status];
+  const lifespan = analysis ? estimateLifespan(analysis.verdict.scores.durability, monthlyWears, analysis.verdict.confidence_label) : null;
 
   async function handleRunCheck() {
     setStatus("extracting");
@@ -60,319 +68,361 @@ export function App() {
 
   return (
     <main className="panel-shell">
-      <header className="panel-header">
-        <div>
-          <p className="eyebrow">Quality Check</p>
-          <h1>Quality verdict</h1>
+      <header className="topbar">
+        <div className="brand-mark" aria-hidden="true">
+          QC
         </div>
-        <span className={`status-pill status-pill--${status}`}>{statusLabel}</span>
+        <div className="topbar-copy">
+          <div>
+            <h1>Quality Check</h1>
+            {extraction?.snapshot.url ? <p>{getDomain(extraction.snapshot.url)}</p> : <p>Clothing page verdict</p>}
+          </div>
+          <span className={`status-pill status-pill--${status}`}>{statusLabel}</span>
+        </div>
       </header>
 
-      <section className="primary-panel">
-        <p className="panel-copy">
-          Extract product evidence from the active tab, run guarded visual enrichment, and return an evidence-labelled Stage 6 verdict.
-        </p>
+      <section className="action-strip">
+        <div>
+          <p className="eyebrow">Active tab</p>
+          <p>{status === "idle" ? "Extract product evidence and run the verdict." : statusDescriptions[status]}</p>
+        </div>
         <button className="primary-button" type="button" onClick={handleRunCheck} disabled={status === "extracting" || status === "sending"}>
-          {status === "extracting" || status === "sending" ? "Checking..." : "Run page check"}
+          {status === "extracting" || status === "sending" ? "Checking" : verdict ? "Refresh" : "Run check"}
         </button>
       </section>
 
       {error ? (
-        <section className="message-block message-block--error">
-          <h2>Error</h2>
+        <section className="notice notice--error">
+          <h2>Check failed</h2>
           <p>{error}</p>
         </section>
       ) : null}
 
-      {extraction ? (
-        <section className="message-block">
-          <h2>Extracted evidence</h2>
-          <dl className="details-list">
-            <div>
-              <dt>Page state</dt>
-              <dd>{extraction.snapshot.product.pageState}</dd>
-            </div>
-            <div>
-              <dt>Source method</dt>
-              <dd>
-                {extraction.snapshot.product.sourceMethod} · confidence{" "}
-                {extraction.snapshot.product.sourceConfidenceScore.toFixed(2)}
-              </dd>
-            </div>
-            {FIELD_ROWS.map((field) => (
-              <div key={field}>
-                <dt>{FIELD_LABELS[field]}</dt>
-                <dd>
-                  {formatFieldValue(extraction.snapshot.product.fields[field].value)}
-                  {extraction.snapshot.product.fields[field].source ? (
-                    <span className="field-meta">
-                      {extraction.snapshot.product.fields[field].source} ·{" "}
-                      {extraction.snapshot.product.fields[field].confidence.toFixed(2)}
-                    </span>
-                  ) : null}
-                </dd>
-              </div>
-            ))}
-            <div>
-              <dt>Images</dt>
-              <dd>{extraction.snapshot.product.imageUrls.length}</dd>
-            </div>
-            <div>
-              <dt>URL</dt>
-              <dd>{extraction.snapshot.url}</dd>
-            </div>
-            <div>
-              <dt>Warnings</dt>
-              <dd>{extraction.snapshot.product.warnings.length ? extraction.snapshot.product.warnings.join("; ") : "None"}</dd>
-            </div>
-          </dl>
-        </section>
-      ) : null}
+      {status === "extracting" || status === "sending" ? <LoadingPanel status={status} /> : null}
 
-      {classification ? (
-        <section className="message-block">
-          <h2>Structured classification</h2>
-          <div className="classification-grid">
-            <Metric label="Category" value={classification.category} />
-            <Metric label="Material" value={classification.material_family} />
-            <Metric label="Brand tier" value={classification.brand_tier} />
-            <Metric label="Confidence" value={`${classification.source_confidence_label} · ${classification.source_confidence_score.toFixed(2)}`} />
-          </div>
-          <dl className="details-list">
-            {CLASSIFICATION_ROWS.map(([label, value]) => (
-              <div key={label}>
-                <dt>{label}</dt>
-                <dd>{value(classification)}</dd>
-              </div>
-            ))}
-          </dl>
-          <ClassificationList title="Quality signals" items={classification.quality_signals} emptyLabel="None found" />
-          <ClassificationList title="Quality concerns" items={classification.quality_concerns} emptyLabel="None found" />
-          <div className="inference-table">
-            <h3>Labelled inferences</h3>
-            {classification.labelled_inferences.length ? (
-              classification.labelled_inferences.map((inference, index) => (
-                <div className="inference-row" key={`${inference.field}-${inference.value}-${index}`}>
-                  <span>{inference.field}</span>
-                  <strong>{inference.value}</strong>
-                  <em>{inference.basis}</em>
-                </div>
-              ))
-            ) : (
-              <p className="empty-copy">None</p>
-            )}
-          </div>
-        </section>
-      ) : null}
-
-      {visualEnrichment ? (
-        <section className="message-block">
-          <h2>Visual enrichment</h2>
-          <div className="classification-grid">
-            <Metric label="Status" value={visualEnrichment.status} />
-            <Metric label="Vision model" value={visualEnrichment.model} />
-            <Metric label="Images" value={String(visualEnrichment.image_urls.length)} />
-            <Metric label="Fallback" value={visualEnrichment.fallback_model} />
-          </div>
-          <ClassificationList title="Vision guardrails" items={visualEnrichment.warnings} emptyLabel="None" />
-        </section>
-      ) : null}
-
-      {verdict ? (
-        <section className="message-block message-block--success">
-          <h2>Backend response</h2>
-          <p>{verdict.summary}</p>
-          {verdict.analysis ? (
-            <>
-              <Stage6VerdictPanel verdict={verdict.analysis.verdict} approvedExamples={verdict.analysis.approved_examples} />
-              <div className="classification-grid">
-                <Metric label="Stage" value={verdict.analysis.stage} />
-                <Metric label="Status" value={verdict.analysis.status} />
-                <Metric label="Analysis model" value={verdict.analysis.verdict.model} />
-                <Metric label="Model status" value={formatLabel(verdict.analysis.verdict.model_status)} />
-              </div>
-              <Stage5VisualPanel verdict={verdict} />
-              <ClassificationList title="Backend warnings" items={verdict.analysis.visual_enrichment.warnings} emptyLabel="None" />
-              <ClassificationList title="Reasoning flags" items={verdict.analysis.verdict.reasoning_flags.map(formatLabel)} emptyLabel="None" />
-              <ClassificationList title="Matched examples" items={verdict.analysis.verdict.matched_examples} emptyLabel="None" />
-            </>
+      {analysis ? (
+        <>
+          <ProductSummary title={productTitle} brand={productBrand} price={productPrice} imageUrl={productImage} classification={analysis.classification} />
+          <RecommendationPanel verdict={analysis.verdict} />
+          <MainVerdict verdict={analysis.verdict} />
+          <ScoreSection verdict={analysis.verdict} />
+          <MaterialSection classification={analysis.classification} />
+          <SignalSection title="Quality signals" items={analysis.classification.quality_signals} emptyLabel="No positive quality signals found." />
+          <SignalSection title="Watch-outs" items={watchOutsFor(analysis)} emptyLabel="No material watch-outs found." />
+          <EvidenceSection analysis={analysis} />
+          {lifespan ? (
+            <LifespanSection
+              monthlyWears={monthlyWears}
+              onMonthlyWearsChange={setMonthlyWears}
+              lifespan={lifespan}
+            />
           ) : null}
-          <dl className="details-list response-meta">
-            <div>
-              <dt>Source</dt>
-              <dd>{verdict.source}</dd>
-            </div>
-            <div>
-              <dt>Request ID</dt>
-              <dd>{verdict.requestId}</dd>
-            </div>
-          </dl>
-        </section>
+          <AlternativesSection approvedExamples={analysis.approved_examples} />
+        </>
+      ) : extraction && classification ? (
+        <>
+          <ProductSummary title={productTitle} brand={productBrand} price={productPrice} imageUrl={productImage} classification={classification} />
+          <section className="notice">
+            <h2>Product evidence captured</h2>
+            <p>Backend verdict is not available yet. The raw extraction and structured classification are available in debug mode.</p>
+          </section>
+        </>
+      ) : status === "idle" ? (
+        <EmptyState />
       ) : null}
+
+      <section className="debug-shell">
+        <button className="debug-toggle" type="button" onClick={() => setDebugOpen((open) => !open)}>
+          <span>Debug evidence</span>
+          <span>{debugOpen ? "Hide" : "Show"}</span>
+        </button>
+        {debugOpen ? (
+          <DebugPanel
+            extraction={extraction}
+            classification={classification}
+            visualEnrichment={visualEnrichment}
+            verdict={verdict}
+          />
+        ) : null}
+      </section>
     </main>
   );
 }
 
-function Stage6VerdictPanel({ verdict, approvedExamples }: { verdict: Stage6Verdict; approvedExamples: MatchedApprovedExample[] }) {
+function LoadingPanel({ status }: { status: Status }) {
   return (
-    <div className="verdict-panel">
-      <div className="verdict-hero">
-        <div>
-          <span className={`recommendation recommendation--${verdict.recommendation}`}>{formatLabel(verdict.recommendation)}</span>
-          <strong>{verdict.overall_rating.toFixed(1)}/10</strong>
+    <section className="panel-section loading-section">
+      <div className="spinner" aria-hidden="true" />
+      <div>
+        <h2>{status === "extracting" ? "Reading the product page" : "Analysing the evidence"}</h2>
+        <p>{status === "extracting" ? "Collecting structured data, page text, images and source confidence." : "Sending the captured product evidence to the quality verdict backend."}</p>
+      </div>
+    </section>
+  );
+}
+
+function EmptyState() {
+  return (
+    <section className="empty-state">
+      <p className="eyebrow">No verdict yet</p>
+      <h2>Open a clothing product page, then run the check.</h2>
+      <p>The panel will show the recommendation first, then the evidence and confidence behind it.</p>
+    </section>
+  );
+}
+
+function ProductSummary({
+  title,
+  brand,
+  price,
+  imageUrl,
+  classification
+}: {
+  title: string;
+  brand: string;
+  price: string | null;
+  imageUrl: string | null;
+  classification: ProductClassification;
+}) {
+  return (
+    <section className="product-summary">
+      <div className="product-image" aria-label={imageUrl ? "Product image" : "Product image unavailable"}>
+        {imageUrl ? <img src={imageUrl} alt="" /> : <span>Image unavailable</span>}
+      </div>
+      <div className="product-copy">
+        <p className="eyebrow">
+          {brand}
+          {price ? ` · ${price}` : ""}
+        </p>
+        <h2>{title}</h2>
+        <div className="tag-row">
+          <span>{formatLabel(classification.category)}</span>
+          <span>{formatLabel(classification.material_family)}</span>
+          <span>{formatLabel(classification.brand_tier)}</span>
         </div>
-        <p>{verdict.recommendation_summary}</p>
       </div>
-
-      <div className="score-grid">
-        <ScoreMeter label="Quality" value={verdict.scores.quality} max={10} />
-        <ScoreMeter label="Value" value={verdict.scores.value} max={10} />
-        <ScoreMeter label="Durability" value={verdict.scores.durability} max={10} />
-        <ScoreMeter label="Aesthetic" value={verdict.scores.aesthetic} max={10} />
-        <ScoreMeter label="Confidence" value={verdict.scores.confidence} max={1} />
-      </div>
-
-      <div className="verdict-grid">
-        <DimensionVerdictBlock title="Quality" score={verdict.scores.quality} verdict={verdict.verdicts.quality} />
-        <DimensionVerdictBlock title="Value" score={verdict.scores.value} verdict={verdict.verdicts.value} />
-        <DimensionVerdictBlock title="Durability" score={verdict.scores.durability} verdict={verdict.verdicts.durability} />
-        <DimensionVerdictBlock title="Aesthetic" score={verdict.scores.aesthetic} verdict={verdict.verdicts.aesthetic} />
-      </div>
-
-      <ClassificationList
-        title="Approved-example anchors"
-        items={approvedExamples.map(
-          (example) =>
-            `${example.id} · ${example.category}/${example.material_family}/${example.brand_tier} · similarity ${example.similarity.toFixed(2)}`
-        )}
-        emptyLabel="None"
-      />
-      <p className="verdict-summary">{verdict.summary}</p>
-    </div>
+    </section>
   );
 }
 
-function Stage5VisualPanel({ verdict }: { verdict: BackendVerdict }) {
-  const visual = verdict.analysis?.visual_enrichment;
-  if (!visual) return null;
-
+function RecommendationPanel({ verdict }: { verdict: Stage6Verdict }) {
   return (
-    <div className="stage-panel">
-      <div className="section-heading-row">
-        <h3>Stage 5 visual response</h3>
-        <span className="section-pill">{visual.status}</span>
-      </div>
-      <div className="classification-grid">
-        <Metric label="Vision model" value={visual.model} />
-        <Metric label="Images sent" value={String(visual.image_count)} />
-        <Metric label="Visual cues" value={String(visual.visual_cues.length)} />
-        <Metric label="Inferences" value={String(visual.expert_inferences.length)} />
-      </div>
-      <ClassificationList
-        title="Diagnostic visual cues"
-        items={visual.visual_cues.map((cue) => `${cue.cue} (${cue.confidence}, ${cue.evidence_type})`)}
-        emptyLabel="None"
-      />
-      <ClassificationList
-        title="Backend visual observations"
-        items={visual.observations.map(
-          (observation) => `${observation.observation} (${observation.confidence}, ${observation.evidence_type})`
-        )}
-        emptyLabel="None"
-      />
-      <ClassificationList
-        title="Expert visual inferences"
-        items={visual.expert_inferences.map(
-          (inference) =>
-            `${inference.inference} (${inference.confidence}, ${inference.quality_dimension}, ${inference.score_dimension}: ${inference.score_effect}) Caveat: ${inference.caveat}`
-        )}
-        emptyLabel="None"
-      />
-      <ClassificationList title="Missing image views" items={visual.missing_views} emptyLabel="None" />
-      <ClassificationList title="Image limits" items={visual.image_quality_limits} emptyLabel="None" />
-    </div>
-  );
-}
-
-const FIELD_ROWS: ProductFieldName[] = [
-  "title",
-  "brand",
-  "price",
-  "currency",
-  "colour",
-  "description",
-  "materials",
-  "care",
-  "construction",
-  "origin",
-  "sizing",
-  "categoryBreadcrumbs"
-];
-
-const FIELD_LABELS: Record<ProductFieldName, string> = {
-  title: "Product title",
-  brand: "Brand",
-  price: "Price",
-  currency: "Currency",
-  colour: "Colour",
-  description: "Description",
-  materials: "Materials",
-  care: "Care",
-  construction: "Construction",
-  origin: "Origin",
-  sizing: "Sizing",
-  categoryBreadcrumbs: "Category"
-};
-
-function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="metric">
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-  );
-}
-
-function ScoreMeter({ label, value, max }: { label: string; value: number; max: number }) {
-  const displayValue = max === 1 ? value.toFixed(2) : value.toFixed(1);
-  const percentage = Math.max(0, Math.min(100, (value / max) * 100));
-
-  return (
-    <div className="score-meter">
+    <section className={`recommendation-card recommendation-card--${verdict.recommendation}`}>
+      <div className="rating-mark">{gradeFor(verdict.overall_rating)}</div>
       <div>
-        <span>{label}</span>
-        <strong>
-          {displayValue}
-          <small>/{max}</small>
-        </strong>
+        <p className="recommendation-label">
+          {formatLabel(verdict.recommendation)} · {verdict.overall_rating.toFixed(1)}/10 · {verdict.confidence_label} confidence
+        </p>
+        <h2>{verdict.recommendation_summary}</h2>
+        <p>{verdict.summary}</p>
       </div>
-      <div className="score-track" aria-hidden="true">
-        <span style={{ width: `${percentage}%` }} />
+    </section>
+  );
+}
+
+function MainVerdict({ verdict }: { verdict: Stage6Verdict }) {
+  return (
+    <section className="panel-section verdict-section">
+      <SectionHeader title="Verdict" meta={`${Math.round(verdict.scores.confidence * 100)}% confidence`} />
+      <p>{verdict.summary || verdict.recommendation_summary}</p>
+    </section>
+  );
+}
+
+function ScoreSection({ verdict }: { verdict: Stage6Verdict }) {
+  return (
+    <section className="panel-section">
+      <SectionHeader title="Scores" meta="tap a row to expand" />
+      <div className="score-list">
+        <ScoreRow title="Quality" score={verdict.scores.quality} verdict={verdict.verdicts.quality} />
+        <ScoreRow title="Value" score={verdict.scores.value} verdict={verdict.verdicts.value} />
+        <ScoreRow title="Durability" score={verdict.scores.durability} verdict={verdict.verdicts.durability} />
+        <ScoreRow title="Aesthetic" score={verdict.scores.aesthetic} verdict={verdict.verdicts.aesthetic} />
       </div>
+    </section>
+  );
+}
+
+function ScoreRow({ title, score, verdict }: { title: string; score: number; verdict: DimensionVerdict }) {
+  return (
+    <details className="score-row" open={title === "Quality"}>
+      <summary>
+        <span>{title}</span>
+        <span className="score-row-preview">{truncate(verdict.verdict, 46)}</span>
+        <span className={`mini-grade mini-grade--${gradeTone(score)}`}>{gradeFor(score)}</span>
+        <strong>{score.toFixed(1)}</strong>
+      </summary>
+      <div className="score-row-body">
+        <Meter value={score} max={10} />
+        <p>{verdict.verdict}</p>
+        <div className="tag-row">
+          <span>{verdict.confidence} confidence</span>
+          <span>{formatLabel(verdict.evidence_type)}</span>
+        </div>
+      </div>
+    </details>
+  );
+}
+
+function MaterialSection({ classification }: { classification: ProductClassification }) {
+  return (
+    <section className="panel-section">
+      <SectionHeader title="Material notes" meta={classification.source_confidence_label} />
+      <Field label="Composition" value={classification.material_description} />
+      <Field label="Construction" value={classification.construction_description} />
+      <Field label="Use case" value={classification.use_case} />
+    </section>
+  );
+}
+
+function SignalSection({ title, items, emptyLabel }: { title: string; items: string[]; emptyLabel: string }) {
+  return (
+    <section className="panel-section">
+      <SectionHeader title={title} />
+      {items.length ? (
+        <ul className="signal-list">
+          {items.map((item) => (
+            <li key={item}>{item}</li>
+          ))}
+        </ul>
+      ) : (
+        <p className="muted">{emptyLabel}</p>
+      )}
+    </section>
+  );
+}
+
+function EvidenceSection({ analysis }: { analysis: BackendAnalysis }) {
+  const evidenceItems = [
+    `Page state: ${formatLabel(analysis.product.page_state)}`,
+    `Source confidence: ${analysis.product.source_confidence_label} (${analysis.product.source_confidence_score.toFixed(2)})`,
+    `Vision: ${analysis.visual_enrichment.status} · ${analysis.visual_enrichment.image_count} images`,
+    `Model: ${analysis.verdict.model} · ${formatLabel(analysis.verdict.model_status)}`
+  ];
+
+  return (
+    <section className="panel-section">
+      <SectionHeader title="Evidence and confidence" meta={analysis.verdict.confidence_label} />
+      <div className="metric-grid">
+        {evidenceItems.map((item) => (
+          <div className="metric" key={item}>
+            {item}
+          </div>
+        ))}
+      </div>
+      <SignalList title="Reasoning flags" items={analysis.verdict.reasoning_flags.map(formatLabel)} emptyLabel="None" />
+      <SignalList title="Missing image views" items={analysis.visual_enrichment.missing_views} emptyLabel="None flagged" />
+    </section>
+  );
+}
+
+function LifespanSection({
+  monthlyWears,
+  onMonthlyWearsChange,
+  lifespan
+}: {
+  monthlyWears: number;
+  onMonthlyWearsChange: (value: number) => void;
+  lifespan: LifespanEstimate;
+}) {
+  return (
+    <section className="panel-section">
+      <SectionHeader title="Estimated lifespan" meta="rough estimate" />
+      <div className="lifespan-result">
+        <strong>{lifespan.label}</strong>
+        <span>{lifespan.confidence} confidence</span>
+      </div>
+      <label className="slider-label" htmlFor="monthly-wears">
+        <span>Monthly wears</span>
+        <strong>{monthlyWears}</strong>
+      </label>
+      <input
+        id="monthly-wears"
+        type="range"
+        min="1"
+        max="30"
+        value={monthlyWears}
+        onChange={(event) => onMonthlyWearsChange(Number(event.target.value))}
+      />
+      <ul className="assumption-list">
+        {lifespan.assumptions.map((assumption) => (
+          <li key={assumption}>{assumption}</li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function AlternativesSection({ approvedExamples }: { approvedExamples: MatchedApprovedExample[] }) {
+  return (
+    <section className="panel-section">
+      <SectionHeader title="Other options" meta={approvedExamples.length ? "comparison anchors" : "not available yet"} />
+      {approvedExamples.length ? (
+        <div className="alternative-list">
+          {approvedExamples.slice(0, 3).map((example) => (
+            <div className="alternative-row" key={example.id}>
+              <div>
+                <strong>{example.id}</strong>
+                <span>
+                  {formatLabel(example.category)} · {formatLabel(example.material_family)} · {example.price_band}
+                </span>
+              </div>
+              <span className="mini-grade mini-grade--positive">{gradeFor(example.expected_scores.value)}</span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="muted">Better alternatives are a Stage 9 storage/recommendation feature. No alternatives were returned with this verdict.</p>
+      )}
+    </section>
+  );
+}
+
+function DebugPanel({
+  extraction,
+  classification,
+  visualEnrichment,
+  verdict
+}: {
+  extraction: ActiveTabExtraction | null;
+  classification: ProductClassification | null;
+  visualEnrichment: unknown;
+  verdict: BackendVerdict | null;
+}) {
+  const debugPayload = {
+    extracted_facts: extraction?.snapshot.product.fields ?? null,
+    quality_signals: classification?.quality_signals ?? [],
+    public_evidence: verdict?.analysis?.public_evidence ?? [],
+    evidence_score_effects: verdict?.analysis?.verdict.evidence_score_effects ?? [],
+    extraction,
+    classification,
+    visual_enrichment: visualEnrichment,
+    backend_response: verdict
+  };
+
+  return (
+    <div className="debug-panel">
+      <p>
+        Shows the underlying extraction, classification, visual guardrails and backend response. This opens by default in local/dev builds.
+      </p>
+      <pre>{JSON.stringify(debugPayload, null, 2)}</pre>
     </div>
   );
 }
 
-function DimensionVerdictBlock({ title, score, verdict }: { title: string; score: number; verdict: DimensionVerdict }) {
+function SectionHeader({ title, meta }: { title: string; meta?: string }) {
   return (
-    <div className="dimension-verdict">
-      <div>
-        <h3>
-          {title}
-          <strong>{score.toFixed(1)}/10</strong>
-        </h3>
-        <span>{verdict.confidence}</span>
-      </div>
-      <p>{verdict.verdict}</p>
-      <em>{formatLabel(verdict.evidence_type)}</em>
+    <div className="section-heading">
+      <h2>{title}</h2>
+      {meta ? <span>{meta}</span> : null}
     </div>
   );
 }
 
-function ClassificationList({ title, items, emptyLabel }: { title: string; items: string[]; emptyLabel: string }) {
+function SignalList({ title, items, emptyLabel }: { title: string; items: string[]; emptyLabel: string }) {
   return (
-    <div className="classification-list">
-      <h3>{title}</h3>
+    <div className="sub-list">
+      <p className="eyebrow">{title}</p>
       {items.length ? (
         <ul>
           {items.map((item) => (
@@ -380,27 +430,121 @@ function ClassificationList({ title, items, emptyLabel }: { title: string; items
           ))}
         </ul>
       ) : (
-        <p className="empty-copy">{emptyLabel}</p>
+        <p className="muted">{emptyLabel}</p>
       )}
     </div>
   );
 }
 
-const CLASSIFICATION_ROWS: Array<[string, (classification: ProductClassification) => string]> = [
-  ["Brand", (classification) => classification.brand || "Unknown"],
-  ["Price", (classification) => classification.price || "Unknown"],
-  ["Primary colour", (classification) => classification.primary_colour || "Unknown"],
-  ["Style tags", (classification) => (classification.style_tags.length ? classification.style_tags.join(", ") : "None")],
-  ["Use case", (classification) => classification.use_case],
-  ["Material description", (classification) => classification.material_description],
-  ["Construction description", (classification) => classification.construction_description]
-];
+function Field({ label, value }: { label: string; value: string | null }) {
+  return (
+    <div className="field-row">
+      <span>{label}</span>
+      <p>{value || "Not found"}</p>
+    </div>
+  );
+}
 
-function formatFieldValue(value: string | string[] | null): string {
-  if (Array.isArray(value)) return value.length ? value.join(" › ") : "Not found";
-  return value || "Not found";
+function Meter({ value, max }: { value: number; max: number }) {
+  const percentage = Math.max(0, Math.min(100, (value / max) * 100));
+  return (
+    <div className="meter" aria-hidden="true">
+      <span style={{ width: `${percentage}%` }} />
+    </div>
+  );
+}
+
+type LifespanEstimate = {
+  label: string;
+  confidence: "low" | "medium";
+  assumptions: string[];
+};
+
+function estimateLifespan(durability: number, monthlyWears: number, verdictConfidence: string): LifespanEstimate {
+  const baselineWears = Math.max(45, durability * 35);
+  const years = baselineWears / Math.max(1, monthlyWears) / 12;
+  const lowYears = Math.max(0.5, years * 0.75);
+  const highYears = Math.max(lowYears + 0.5, years * 1.25);
+  const label = `${formatYearRange(lowYears)}-${formatYearRange(highYears)} years`;
+
+  return {
+    label,
+    confidence: verdictConfidence === "high" && durability >= 6 ? "medium" : "low",
+    assumptions: ["normal care", "rotated with other clothing", "not worn in harsh conditions"]
+  };
+}
+
+function formatYearRange(value: number): string {
+  if (value < 1) return "<1";
+  if (value < 2) return value.toFixed(1);
+  return String(Math.round(value));
+}
+
+function watchOutsFor(analysis: BackendAnalysis): string[] {
+  return [
+    ...analysis.classification.quality_concerns,
+    ...analysis.verdict.reasoning_flags.map(formatLabel),
+    ...analysis.visual_enrichment.warnings,
+    ...analysis.visual_enrichment.image_quality_limits
+  ].filter(Boolean);
+}
+
+function getFieldValue(value: string | string[] | null | undefined): string | null {
+  if (Array.isArray(value)) return value.filter(Boolean).join(" · ") || null;
+  return value || null;
+}
+
+function getDomain(url: string | undefined): string {
+  if (!url) return "unknown retailer";
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return "unknown retailer";
+  }
+}
+
+function gradeFor(score: number): string {
+  if (score >= 8.5) return "A";
+  if (score >= 7.5) return "A-";
+  if (score >= 6.5) return "B+";
+  if (score >= 5.5) return "B";
+  if (score >= 4.5) return "C";
+  return "D";
+}
+
+function gradeTone(score: number): "positive" | "neutral" | "warning" {
+  if (score >= 7.2) return "positive";
+  if (score >= 5.5) return "neutral";
+  return "warning";
 }
 
 function formatLabel(value: string): string {
   return value.replace(/_/g, " ");
 }
+
+function truncate(value: string, maxLength: number): string {
+  return value.length > maxLength ? `${value.slice(0, maxLength - 1)}...` : value;
+}
+
+function isLocalDebugEnvironment(): boolean {
+  if (import.meta.env.DEV) return true;
+  if (typeof chrome === "undefined" || !chrome.runtime?.getManifest) return true;
+  const manifest = chrome.runtime.getManifest();
+  return !("update_url" in manifest);
+}
+
+const statusLabels: Record<Status, string> = {
+  idle: "Ready",
+  extracting: "Reading",
+  sending: "Analysing",
+  complete: "Verdict ready",
+  error: "Needs attention"
+};
+
+const statusDescriptions: Record<Status, string> = {
+  idle: "Extract product evidence and run the verdict.",
+  extracting: "Reading the active tab.",
+  sending: "Sending the evidence bundle.",
+  complete: "Verdict is up to date.",
+  error: "Review the error and retry."
+};

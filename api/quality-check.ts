@@ -10,6 +10,11 @@ import type {
   MaterialFamily,
   ProductCategory,
   ProductClassification,
+  PublicEvidenceDimension,
+  PublicEvidenceItem,
+  PublicEvidenceSentiment,
+  PublicEvidenceSourceType,
+  PublicEvidenceSpecificity,
   Recommendation,
   Stage6Verdict,
   VerdictConfidence,
@@ -51,6 +56,7 @@ type QualityCheckEnv = {
   coreModel: string;
   premiumFallbackModel: string;
   embeddingModel: string;
+  publicEvidenceSearchEnabled: boolean;
 };
 
 type DownloadedImage = {
@@ -98,6 +104,7 @@ type ParsedVisionResult = {
 
 type Stage6Context = {
   payload: BackendPayload;
+  publicEvidence: PublicEvidenceItem[];
   visual: BackendAnalysis["visual_enrichment"];
   matchedExamples: MatchedApprovedExample[];
   env: QualityCheckEnv;
@@ -228,8 +235,10 @@ export async function handleQualityCheckPayload(
     warnings: uniqueStrings(warnings)
   };
   const matchedExamples = retrieveApprovedExamples(payload.classification);
+  const publicEvidence = await gatherPublicEvidencePack(payload, env, dependencies.fetcher || fetch);
   const verdict = await createStage6Verdict({
     payload,
+    publicEvidence,
     visual: visualResult,
     matchedExamples,
     env,
@@ -246,6 +255,7 @@ export async function handleQualityCheckPayload(
       source_confidence_label: payload.classification.source_confidence_label
     },
     classification: payload.classification,
+    public_evidence: publicEvidence,
     visual_enrichment: visualResult,
     verdict,
     approved_examples: matchedExamples,
@@ -325,9 +335,9 @@ function createHeuristicVerdict(context: Stage6Context, status: Stage6Verdict["m
   const guardrails = buildScoreGuardrails(classification, product.page_state, sourceConfidence);
   const anchorScores = averageAnchorScores(context.matchedExamples);
   const scores: VerdictScores = {
-    quality: clampScore(blendScore(midpoint(guardrails.quality), anchorScores.quality, 0.35), guardrails.quality),
-    value: clampScore(blendScore(midpoint(guardrails.value), anchorScores.value, 0.35), guardrails.value),
-    durability: clampScore(blendScore(midpoint(guardrails.durability), anchorScores.durability, 0.35), guardrails.durability),
+    quality: clampScore(applyPublicEvidenceEffects(blendScore(midpoint(guardrails.quality), anchorScores.quality, 0.35), context.publicEvidence, "quality"), guardrails.quality),
+    value: clampScore(applyPublicEvidenceEffects(blendScore(midpoint(guardrails.value), anchorScores.value, 0.35), context.publicEvidence, "value"), guardrails.value),
+    durability: clampScore(applyPublicEvidenceEffects(blendScore(midpoint(guardrails.durability), anchorScores.durability, 0.35), context.publicEvidence, "durability"), guardrails.durability),
     aesthetic: clampScore(
       applyVisualEffects(blendScore(midpoint(guardrails.aesthetic), anchorScores.aesthetic, 0.3), context.visual.expert_inferences),
       guardrails.aesthetic
@@ -353,6 +363,7 @@ function createHeuristicVerdict(context: Stage6Context, status: Stage6Verdict["m
     },
     reasoning_flags: reasoningFlags,
     matched_examples: context.matchedExamples.map((item) => item.id),
+    evidence_score_effects: describeEvidenceScoreEffects(context.publicEvidence),
     summary: summaryLine(recommendation, scores, classification),
     model: context.env.coreModel,
     model_status: status
@@ -394,6 +405,7 @@ function sanitiseStage6Verdict(
     },
     reasoning_flags: uniqueStrings([...(candidate.reasoning_flags || []), ...fallback.reasoning_flags]).slice(0, 10),
     matched_examples: fallback.matched_examples,
+    evidence_score_effects: uniqueStrings([...(candidate.evidence_score_effects || []), ...fallback.evidence_score_effects]).slice(0, 10),
     summary: cleanText(candidate.summary, fallback.summary, 160),
     model: context.env.coreModel,
     model_status: "model_completed"
@@ -407,6 +419,142 @@ function retrieveApprovedExamples(classification: ProductClassification): Matche
   }))
     .sort((left, right) => right.similarity - left.similarity)
     .slice(0, 5);
+}
+
+async function gatherPublicEvidencePack(payload: BackendPayload, env: QualityCheckEnv, fetcher: Fetcher): Promise<PublicEvidenceItem[]> {
+  const official = buildOfficialEvidence(payload);
+  if (!env.publicEvidenceSearchEnabled) return official;
+
+  const searchItems: PublicEvidenceItem[] = [];
+  const queries = buildPublicEvidenceQueries(payload).slice(0, 5);
+  for (const query of queries) {
+    try {
+      const response = await fetcher(`https://duckduckgo.com/html/?q=${encodeURIComponent(query)}`, {
+        headers: { "User-Agent": "QualityCheckBot/0.1" },
+        signal: AbortSignal.timeout(5000)
+      });
+      if (!response.ok) continue;
+      const html = await response.text();
+      searchItems.push(...summariseSearchResults(html, payload));
+    } catch {
+      continue;
+    }
+    if (searchItems.length >= 8) break;
+  }
+
+  return dedupePublicEvidence([...official, ...searchItems]).slice(0, 12);
+}
+
+function buildOfficialEvidence(payload: BackendPayload): PublicEvidenceItem[] {
+  const product = payload.page.product;
+  const classification = payload.classification;
+  const url = payload.page.url;
+  const items: PublicEvidenceItem[] = [];
+
+  function add(dimension: PublicEvidenceDimension, claim: string, confidence = 0.88): void {
+    items.push({
+      sourceType: "official",
+      specificity: "exact_product",
+      dimension,
+      claim,
+      sentiment: "positive",
+      confidence,
+      url,
+      quote: claim
+    });
+  }
+
+  if (product.fields.materials.value) add("fabric", `Official page states material: ${textField(product.fields.materials.value)}.`);
+  if (product.fields.origin.value) add("quality", `Official page states origin: ${textField(product.fields.origin.value)}.`);
+  if (product.fields.construction.value) add("quality", `Official page states construction details: ${textField(product.fields.construction.value)}.`);
+  if (product.fields.onSiteRating.value && product.fields.onSiteReviewCount.value) {
+    add("risk", `On-site reviews show ${textField(product.fields.onSiteRating.value)}/5 from ${textField(product.fields.onSiteReviewCount.value)} reviews.`, 0.76);
+  }
+  for (const signal of classification.quality_signals) add(signal.includes("reviews") ? "risk" : "quality", signal, 0.74);
+
+  return dedupePublicEvidence(items).slice(0, 8);
+}
+
+function buildPublicEvidenceQueries(payload: BackendPayload): string[] {
+  const brand = payload.classification.brand || "";
+  const title = String(payload.page.product.fields.title.value || payload.page.title || "").trim();
+  const code = extractProductCode(`${title} ${payload.page.visibleText}`);
+  const category = payload.classification.category === "other" ? "" : payload.classification.category;
+  const line = extractLineName(title);
+  return uniqueStrings([
+    `${brand} ${title} review`,
+    code ? `${brand} ${code}` : "",
+    category ? `${brand} ${category} review` : "",
+    `${brand} sizing reddit`,
+    line ? `${brand} ${line} review` : ""
+  ].filter(Boolean));
+}
+
+function summariseSearchResults(html: string, payload: BackendPayload): PublicEvidenceItem[] {
+  const brand = (payload.classification.brand || "").toLowerCase();
+  const title = String(payload.page.product.fields.title.value || payload.page.title || "").toLowerCase();
+  const code = extractProductCode(`${title} ${payload.page.visibleText}`)?.toLowerCase() || "";
+  const results = Array.from(html.matchAll(/<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>[\s\S]{0,700}?<a[^>]+class="result__snippet"[^>]*>([\s\S]*?)<\/a>/gi));
+  return results
+    .map((match): PublicEvidenceItem | null => {
+      const url = decodeDuckDuckGoUrl(stripHtml(match[1]));
+      const heading = stripHtml(match[2]);
+      const snippet = stripHtml(match[3]);
+      if (!url || !heading || !snippet) return null;
+      const combined = `${heading} ${snippet}`.toLowerCase();
+      if (brand && !combined.includes(brand.split(/\s+/)[0])) return null;
+      const titleTerms = title
+        .split(/\s+/)
+        .filter((word) => word.length > 3 && !/^(?:shirt|shirts|button|down|vintage|classic|review)$/.test(word));
+      const specificity: PublicEvidenceSpecificity = code && combined.includes(code)
+        ? "exact_product"
+        : titleTerms.some((word) => combined.includes(word))
+          ? "same_line"
+          : payload.classification.category !== "other" && combined.includes(payload.classification.category)
+            ? "same_brand_category"
+            : "brand_general";
+      return {
+        sourceType: classifyEvidenceSource(url, combined),
+        specificity,
+        dimension: classifyEvidenceDimension(combined),
+        claim: snippet.slice(0, 260),
+        sentiment: classifyEvidenceSentiment(combined),
+        confidence: specificity === "exact_product" ? 0.68 : specificity === "same_line" ? 0.58 : 0.46,
+        url,
+        quote: snippet.slice(0, 180)
+      };
+    })
+    .filter((item): item is PublicEvidenceItem => Boolean(item))
+    .slice(0, 6);
+}
+
+function dedupePublicEvidence(items: PublicEvidenceItem[]): PublicEvidenceItem[] {
+  const seen = new Set<string>();
+  const result: PublicEvidenceItem[] = [];
+  for (const item of items) {
+    const key = `${item.sourceType}:${item.specificity}:${item.dimension}:${item.claim.toLowerCase().slice(0, 90)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push({ ...item, confidence: round2(Math.max(0, Math.min(1, item.confidence))) });
+  }
+  return result;
+}
+
+function applyPublicEvidenceEffects(score: number, evidence: PublicEvidenceItem[], dimension: PublicEvidenceDimension): number {
+  const delta = evidence.reduce((total, item) => {
+    if (item.dimension !== dimension && !(dimension === "quality" && item.dimension === "fabric")) return total;
+    const specificity = { exact_product: 0.28, same_line: 0.18, same_brand_category: 0.1, brand_general: 0.05 }[item.specificity];
+    const direction = item.sentiment === "positive" ? 1 : item.sentiment === "negative" ? -1 : 0;
+    return total + direction * specificity * item.confidence;
+  }, 0);
+  return score + Math.max(-0.45, Math.min(0.45, delta));
+}
+
+function describeEvidenceScoreEffects(evidence: PublicEvidenceItem[]): string[] {
+  return evidence
+    .filter((item) => item.sentiment !== "neutral" && item.confidence >= 0.55)
+    .map((item) => `${item.sentiment} ${item.dimension}: ${item.specificity} ${item.sourceType} evidence - ${item.claim}`)
+    .slice(0, 8);
 }
 
 function similarityScore(classification: ProductClassification, exampleItem: MatchedApprovedExample): number {
@@ -509,6 +657,7 @@ function buildReasoningFlags(context: Stage6Context): string[] {
   if (!product.fields.materials.value) flags.push("material_composition_not_found");
   if (!product.fields.care.value) flags.push("care_label_not_found");
   if (!product.fields.construction.value) flags.push("construction_method_not_verified");
+  if (!product.fields.sizing.value) flags.push("sizing_not_verified");
   if (context.visual.status === "skipped") flags.push("visual_enrichment_skipped");
   if (context.visual.missing_views.length) flags.push("missing_close_up_views");
   if (product.source_confidence_score < 0.45) flags.push("weak_source_data");
@@ -604,6 +753,7 @@ function buildStage6Instructions(): string {
     "For ratings below 7.0, include at least one concrete limitation. For ratings above 7.0, include why it beats the average and what caveat remains.",
     "Do not use generic filler like 'construction quality cannot be fully verified from images' unless you specify the exact missing evidence, e.g. seam close-up, button attachment, collar/placket structure, lining, sole attachment, stitch regularity, edge finishing.",
     "Do not hard-claim fibre authenticity, exact construction, leather grade, guaranteed build quality, or long-term durability from images.",
+    "Use public_evidence only according to source specificity and confidence. Exact-product evidence can move scores more than brand-general evidence. Make score changes traceable in evidence_score_effects.",
     "Weak source data must cap confidence and can return not_enough_info. Confidence must be deterministic from source evidence."
   ].join("\n");
 }
@@ -612,6 +762,7 @@ function buildStage6ModelInput(context: Stage6Context, fallback: Stage6Verdict) 
   return {
     product: context.payload.page.product,
     classification: context.payload.classification,
+    public_evidence: context.publicEvidence,
     visual_enrichment: context.visual,
     matched_approved_examples: context.matchedExamples,
     market_context: {
@@ -660,7 +811,7 @@ function stage6ResponseSchema() {
   return {
     type: "object",
     additionalProperties: false,
-    required: ["overall_rating", "recommendation", "recommendation_summary", "scores", "confidence_label", "verdicts", "reasoning_flags", "matched_examples", "summary"],
+    required: ["overall_rating", "recommendation", "recommendation_summary", "scores", "confidence_label", "verdicts", "reasoning_flags", "matched_examples", "evidence_score_effects", "summary"],
     properties: {
       overall_rating: { type: "number" },
       recommendation: { enum: ["strong_buy", "buy", "consider", "reconsider", "overpriced", "avoid", "not_enough_info"] },
@@ -675,6 +826,7 @@ function stage6ResponseSchema() {
       },
       reasoning_flags: { type: "array", items: { type: "string" } },
       matched_examples: { type: "array", items: { type: "string" } },
+      evidence_score_effects: { type: "array", items: { type: "string" } },
       summary: { type: "string" }
     }
   };
@@ -857,6 +1009,76 @@ function materialQualityInsight(classification: ProductClassification): string {
   return "The material evidence is too thin to make a confident quality call.";
 }
 
+function textField(value: string | string[] | null): string {
+  return Array.isArray(value) ? value.join("; ") : value || "";
+}
+
+function extractProductCode(value: string): string | null {
+  return value.match(/\b[A-Z]{1,6}\d{2,}[A-Z0-9-]*\b/i)?.[0] || null;
+}
+
+function extractLineName(title: string): string | null {
+  const words = title
+    .replace(/\b[A-Z]{1,6}\d{2,}[A-Z0-9-]*\b/g, "")
+    .split(/\s+/)
+    .filter((word) => /^[a-z][a-z-]{3,}$/i.test(word))
+    .slice(0, 3);
+  return words.length ? words.join(" ") : null;
+}
+
+function stripHtml(value: string): string {
+  return value
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function decodeDuckDuckGoUrl(value: string): string | null {
+  try {
+    const url = new URL(value, "https://duckduckgo.com");
+    const uddg = url.searchParams.get("uddg");
+    return uddg ? decodeURIComponent(uddg) : url.href;
+  } catch {
+    return null;
+  }
+}
+
+function classifyEvidenceSource(url: string, text: string): PublicEvidenceSourceType {
+  const host = (() => {
+    try {
+      return new URL(url).hostname.toLowerCase();
+    } catch {
+      return "";
+    }
+  })();
+  if (/reddit|styleforum|askandy|fedoralounge/.test(host)) return host.includes("reddit") ? "forum" : "forum";
+  if (/review|blog|magazine|putthison|permanentstyle|ivy-style|dieworkwear/.test(host) || /\breview\b/.test(text)) return "expert_review";
+  if (/shop|store|shirts|retailer|mrporter|nordstrom|amazon/.test(host)) return "retailer";
+  return "brand_background";
+}
+
+function classifyEvidenceDimension(text: string): PublicEvidenceDimension {
+  if (/\b(size|sizing|fits?|fit)\b/.test(text)) return /\bsizing\b/.test(text) ? "sizing" : "fit";
+  if (/\b(fabric|cotton|linen|wool|material|cloth)\b/.test(text)) return "fabric";
+  if (/\b(durable|last|wears?|fray|shrink|pilling)\b/.test(text)) return "durability";
+  if (/\b(price|value|worth|expensive|cheap)\b/.test(text)) return "value";
+  if (/\b(style|look|aesthetic|ivy|classic)\b/.test(text)) return "aesthetic";
+  if (/\b(problem|issue|risk|complaint|return)\b/.test(text)) return "risk";
+  return "quality";
+}
+
+function classifyEvidenceSentiment(text: string): PublicEvidenceSentiment {
+  const positive = /\b(good|great|excellent|well made|quality|recommend|positive|classic|durable|comfortable)\b/.test(text);
+  const negative = /\b(bad|poor|issue|problem|complaint|shrink|thin|cheap|return|negative|inconsistent)\b/.test(text);
+  if (positive && negative) return "mixed";
+  if (positive) return "positive";
+  if (negative) return "negative";
+  return "neutral";
+}
+
 function constructionExpectation(category: ProductCategory): string {
   if (category === "shirt") {
     return "For construction, the useful evidence would be collar and placket structure, seam puckering, stitch regularity, button attachment, fabric transparency, and pattern matching.";
@@ -991,7 +1213,8 @@ function readQualityCheckEnv(env: Env): QualityCheckEnv {
     visionModel: env.QUALITY_CHECK_VISION_MODEL || DEFAULT_VISION_MODEL,
     coreModel: env.QUALITY_CHECK_CORE_MODEL || DEFAULT_CORE_MODEL,
     premiumFallbackModel: env.QUALITY_CHECK_PREMIUM_FALLBACK_MODEL || DEFAULT_PREMIUM_FALLBACK_MODEL,
-    embeddingModel: env.QUALITY_CHECK_EMBEDDING_MODEL || DEFAULT_EMBEDDING_MODEL
+    embeddingModel: env.QUALITY_CHECK_EMBEDDING_MODEL || DEFAULT_EMBEDDING_MODEL,
+    publicEvidenceSearchEnabled: env.QUALITY_CHECK_PUBLIC_EVIDENCE_SEARCH !== "disabled"
   };
 }
 

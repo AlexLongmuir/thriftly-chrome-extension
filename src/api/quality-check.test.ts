@@ -366,7 +366,7 @@ describe("quality-check API", () => {
 
     expect(result).toMatchObject({
       requestId: "request-stable",
-      summary: 'Stage 6 verdict completed for "Merino Jumper": buy (7.1/10).',
+      summary: 'Stage 6 verdict completed for "Merino Jumper": buy (7.3/10).',
       receivedUrl: "https://shop.example/products/merino-jumper",
       source: "backend",
       capturedTitle: "Merino Jumper",
@@ -423,10 +423,10 @@ describe("quality-check API", () => {
           ])
         },
         verdict: {
-          overall_rating: 7.1,
+          overall_rating: 7.3,
           recommendation: "buy",
           scores: {
-            quality: 7.3,
+            quality: 7.8,
             value: 6.7,
             durability: 6.5,
             aesthetic: 7.6,
@@ -463,7 +463,7 @@ describe("quality-check API", () => {
       results[0].analysis?.verdict.scores,
       results[0].analysis?.verdict.scores
     ]);
-    expect(results.map((result) => result.analysis?.verdict.overall_rating)).toEqual([7.1, 7.1, 7.1]);
+    expect(results.map((result) => result.analysis?.verdict.overall_rating)).toEqual([7.2, 7.2, 7.2]);
   });
 
   it("caps weak source data and returns not_enough_info instead of strong claims", async () => {
@@ -531,6 +531,7 @@ describe("quality-check API", () => {
             },
             reasoning_flags: [],
             matched_examples: ["wrong_example"],
+            evidence_score_effects: [],
             summary: "Overconfident model output."
           })
         });
@@ -551,6 +552,96 @@ describe("quality-check API", () => {
     });
     expect(result.analysis?.verdict.overall_rating).toBe(8.2);
   });
+
+  it("creates a traceable public evidence pack and lifts Kamakura WQGS04 above the old under-score", async () => {
+    const payload = createPayload({ imageUrls: [] });
+    payload.page.url = "https://kamakurashirts.com/products/wqgs04";
+    payload.page.title = "Vintage Ivy Oxford Button Down Shirt WQGS04 | Kamakura Shirts";
+    payload.page.visibleText = "Cotton 100%. Made in Japan. Shell buttons. Box pleat. Locker loop. Back collar button. 5.0 3 reviews.";
+    payload.page.product.fields.title = field("Vintage Ivy Oxford Button Down Shirt WQGS04");
+    payload.page.product.fields.brand = field("Kamakura Shirts");
+    payload.page.product.fields.materials = field("Cotton 100%");
+    payload.page.product.fields.origin = field("Made in Japan");
+    payload.page.product.fields.construction = field("shell buttons; box pleat; locker loop; back collar button; pleated cuffs; front placket");
+    payload.page.product.fields.onSiteRating = field("5.0");
+    payload.page.product.fields.onSiteReviewCount = field("3");
+    payload.page.product.fields.sizing = field(null);
+    payload.classification = {
+      ...payload.classification,
+      category: "shirt",
+      brand: "Kamakura Shirts",
+      brand_tier: "mid-premium",
+      material_family: "cotton",
+      material_description: "Cotton 100%.",
+      construction_description: "shell buttons; box pleat; locker loop; back collar button; pleated cuffs; front placket.",
+      quality_signals: [
+        "stated on page: single-fibre natural material composition",
+        "stated on page: Made in Japan",
+        "stated on page: shell buttons",
+        "stated on page: locker loop",
+        "stated on page: back collar button",
+        "stated on page: box pleat",
+        "stated on page: 5.0/5 from 3 reviews"
+      ],
+      quality_concerns: ["unknown: care information not found"],
+      source_confidence_score: 0.9,
+      source_confidence_label: "high"
+    };
+
+    const result = await handleQualityCheckPayload(payload, {
+      env: testEnv({ QUALITY_CHECK_PUBLIC_EVIDENCE_SEARCH: "enabled" }),
+      requestId: () => "kamakura-wqgs04",
+      fetcher: async () =>
+        new Response(
+          `
+            <a class="result__a" href="https://example.com/kamakura-wqgs04-review">Kamakura WQGS04 review</a>
+            <a class="result__snippet">Kamakura WQGS04 review says the cotton oxford fabric feels substantial and the shirt is well made.</a>
+            <a class="result__a" href="https://example.com/kamakura-shirts-review">Kamakura Shirts dress shirt review</a>
+            <a class="result__snippet">Kamakura Shirts dress shirts are praised for fabric quality, consistent sizing, and value.</a>
+          `,
+          { headers: { "content-type": "text/html" } }
+        )
+    });
+
+    expect(result.analysis?.classification.brand).toBe("Kamakura Shirts");
+    expect(result.analysis?.classification.material_description).toBe("Cotton 100%.");
+    expect(result.analysis?.public_evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sourceType: "official",
+          specificity: "exact_product",
+          dimension: "fabric",
+          claim: expect.stringContaining("Cotton 100%")
+        }),
+        expect.objectContaining({
+          sourceType: "official",
+          specificity: "exact_product",
+          claim: expect.stringContaining("Made in Japan")
+        }),
+        expect.objectContaining({
+          sourceType: "official",
+          specificity: "exact_product",
+          claim: expect.stringContaining("5.0/5 from 3 reviews")
+        }),
+        expect.objectContaining({
+          sourceType: "expert_review",
+          specificity: "exact_product",
+          dimension: "fabric",
+          claim: expect.stringContaining("cotton oxford fabric")
+        }),
+        expect.objectContaining({
+          sourceType: "expert_review",
+          specificity: "same_brand_category",
+          claim: expect.stringContaining("fabric quality")
+        })
+      ])
+    );
+    expect(result.analysis?.verdict.evidence_score_effects).toEqual(expect.arrayContaining([expect.stringContaining("fabric")]));
+    expect(result.analysis?.verdict.reasoning_flags).toContain("sizing_not_verified");
+    expect(result.analysis?.verdict.reasoning_flags).not.toContain("material_composition_not_found");
+    expect(result.analysis?.verdict.scores.quality).toBeGreaterThan(5.6);
+    expect(result.analysis?.verdict.scores.value).toBeGreaterThan(5.6);
+  });
 });
 
 function testEnv(overrides: Record<string, string> = {}) {
@@ -561,6 +652,7 @@ function testEnv(overrides: Record<string, string> = {}) {
     QUALITY_CHECK_CORE_MODEL: "gpt-5.4-mini",
     QUALITY_CHECK_PREMIUM_FALLBACK_MODEL: "gpt-5.4",
     QUALITY_CHECK_EMBEDDING_MODEL: "text-embedding-3-small",
+    QUALITY_CHECK_PUBLIC_EVIDENCE_SEARCH: "disabled",
     ...overrides
   };
 }
@@ -658,5 +750,8 @@ const FIELD_NAMES: ProductFieldName[] = [
   "construction",
   "origin",
   "sizing",
+  "onSiteRating",
+  "onSiteReviewCount",
+  "reviewClaims",
   "categoryBreadcrumbs"
 ];

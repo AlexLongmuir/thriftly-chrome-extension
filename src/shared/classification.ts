@@ -22,6 +22,8 @@ const BRAND_TIERS: Record<string, BrandTier> = {
   "mr p": "mid-premium",
   allsaints: "premium",
   patagonia: "premium",
+  "kamakura shirts": "mid-premium",
+  kamakura: "mid-premium",
   celine: "luxury"
 };
 
@@ -222,9 +224,13 @@ function buildConstructionDescription(product: ProductExtraction): string {
 
 function qualitySignals(product: ProductExtraction, materialFamily: MaterialFamily): string[] {
   const materialText = (stringField(product, "materials") || "").toLowerCase();
+  const constructionText = textFromValues(product.fields.construction.value).toLowerCase();
+  const originText = textFromValues(product.fields.origin.value).toLowerCase();
+  const rating = stringField(product, "onSiteRating");
+  const reviewCount = stringField(product, "onSiteReviewCount");
   const signals: string[] = [];
 
-  if (/\b100%\s+(?:wool|merino|cashmere|cotton|linen|leather|silk)\b/.test(materialText)) {
+  if (/\b(?:100%\s+(?:wool|merino|cashmere|cotton|linen|leather|silk)|(?:wool|merino|cashmere|cotton|linen|leather|silk)\s+100%)(?!\w)/.test(materialText)) {
     signals.push("stated on page: single-fibre natural material composition");
   }
   if (/\b(merino|cashmere|full[-\s]?grain|sheep leather|lamb leather)\b/.test(materialText)) {
@@ -232,8 +238,16 @@ function qualitySignals(product: ProductExtraction, materialFamily: MaterialFami
   }
   if (materialFamily === "leather") signals.push("inferred from material: leather can be a positive durability signal when genuine and well constructed");
   if (product.fields.care.value) signals.push("stated on page: care information is available");
+  if (/\bmade in japan\b/.test(originText)) signals.push("stated on page: Made in Japan");
+  if (/\bshell buttons?\b/.test(constructionText)) signals.push("stated on page: shell buttons");
+  if (/\bbox pleat\b/.test(constructionText)) signals.push("stated on page: box pleat");
+  if (/\blocker loop\b/.test(constructionText)) signals.push("stated on page: locker loop");
+  if (/\bback collar button\b/.test(constructionText)) signals.push("stated on page: back collar button");
+  if (/\bpleated cuffs?\b/.test(constructionText)) signals.push("stated on page: pleated cuffs");
+  if (/\bfront placket\b/.test(constructionText)) signals.push("stated on page: front placket");
+  if (rating && reviewCount) signals.push(`stated on page: ${rating}/5 from ${reviewCount} reviews`);
 
-  return signals.slice(0, 5);
+  return signals.slice(0, 10);
 }
 
 function qualityConcerns(product: ProductExtraction, materialFamily: MaterialFamily): string[] {
