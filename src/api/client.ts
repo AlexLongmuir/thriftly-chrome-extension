@@ -1,6 +1,7 @@
 import type { BackendPayload, BackendVerdict } from "../shared/messages";
 
-const API_URL = import.meta.env.VITE_QUALITY_CHECK_API_URL as string | undefined;
+const DEFAULT_API_URL = "https://thriftly-chrome-extension.vercel.app/api/quality-check";
+const API_URL = (import.meta.env.VITE_QUALITY_CHECK_API_URL as string | undefined) || DEFAULT_API_URL;
 
 export async function submitQualityCheck(payload: BackendPayload): Promise<BackendVerdict> {
   if (!API_URL) {
@@ -44,6 +45,33 @@ function createMockVerdict(payload: BackendPayload): BackendVerdict {
         source_confidence_label: payload.classification.source_confidence_label
       },
       classification: payload.classification,
+      page_evidence: [],
+      external_evidence: [],
+      benchmark_evidence: [],
+      external_coverage: "none",
+      external_sources_found: false,
+      useful_sources_count: 0,
+      external_score_impact: "none",
+      rejected_sources: [],
+      key_external_insights: [],
+      repeated_themes: [],
+      conflicting_evidence: [],
+      evidence_gaps: [],
+      cross_source_themes: [],
+      external_search_diagnostics: ["mock_backend_not_configured"],
+      external_evidence_pack: {
+        external_sources_found: false,
+        useful_sources_count: 0,
+        external_evidence_quality: "none",
+        external_score_impact: "none",
+        evidence: [],
+        key_external_insights: [],
+        repeated_themes: [],
+        conflicting_evidence: [],
+        evidence_gaps: [],
+        cross_source_themes: [],
+        rejected_sources: []
+      },
       public_evidence: [],
       visual_enrichment: {
         status: "skipped",

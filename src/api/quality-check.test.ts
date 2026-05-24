@@ -589,51 +589,98 @@ describe("quality-check API", () => {
     };
 
     const result = await handleQualityCheckPayload(payload, {
-      env: testEnv({ QUALITY_CHECK_PUBLIC_EVIDENCE_SEARCH: "enabled" }),
+      env: testEnv({ OPENAI_API_KEY: "test-openai-key", QUALITY_CHECK_PUBLIC_EVIDENCE_SEARCH: "enabled" }),
       requestId: () => "kamakura-wqgs04",
-      fetcher: async () =>
-        new Response(
-          `
-            <a class="result__a" href="https://example.com/kamakura-wqgs04-review">Kamakura WQGS04 review</a>
-            <a class="result__snippet">Kamakura WQGS04 review says the cotton oxford fabric feels substantial and the shirt is well made.</a>
-            <a class="result__a" href="https://example.com/kamakura-shirts-review">Kamakura Shirts dress shirt review</a>
-            <a class="result__snippet">Kamakura Shirts dress shirts are praised for fabric quality, consistent sizing, and value.</a>
-          `,
-          { headers: { "content-type": "text/html" } }
-        )
+      fetcher: async (input) => {
+        expect(String(input)).toBe("https://api.openai.com/v1/responses");
+        return Response.json({
+          output_text: JSON.stringify({
+            external_sources_found: true,
+            useful_sources_count: 2,
+            external_evidence_quality: "moderate",
+            external_score_impact: "medium",
+            evidence: [
+              {
+                source_domain: "example.com",
+                source_url: "https://example.com/kamakura-wqgs04-review",
+                evidence_type: "exact_product",
+                specificity: "exact_product",
+                claim: "Kamakura WQGS04 review says the cotton oxford fabric feels substantial and the shirt is well made.",
+                quote: "cotton oxford fabric feels substantial",
+                relevance_score: 0.86,
+                confidence: 0.72,
+                affects: ["quality", "durability", "value"],
+                reason_included: "Exact product review on an outside domain."
+              },
+              {
+                source_domain: "example.com",
+                source_url: "https://example.com/kamakura-shirts-review",
+                evidence_type: "independent_review",
+                specificity: "same_line",
+                claim: "Kamakura Shirts dress shirts are praised for fabric quality, consistent sizing, and value.",
+                quote: "praised for fabric quality, consistent sizing, and value",
+                relevance_score: 0.78,
+                confidence: 0.66,
+                affects: ["quality", "value"],
+                reason_included: "High-specificity independent review of the same shirt lane."
+              }
+            ],
+            rejected_sources: []
+          })
+        });
+      }
     });
 
     expect(result.analysis?.classification.brand).toBe("Kamakura Shirts");
     expect(result.analysis?.classification.material_description).toBe("Cotton 100%.");
+    expect(result.analysis?.page_evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ claim: expect.stringContaining("Cotton 100%") }),
+        expect.objectContaining({ claim: expect.stringContaining("Made in Japan") }),
+        expect.objectContaining({ claim: expect.stringContaining("5.0/5 from 3 reviews") })
+      ])
+    );
+    expect(result.analysis?.external_evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source_domain: "example.com",
+          source_url: "https://example.com/kamakura-wqgs04-review",
+          evidence_type: "exact_product",
+          source_type: "expert_guide",
+          specificity: "exact_product",
+          concrete_insight: expect.stringContaining("cotton oxford fabric"),
+          theme: "fabric_weight"
+        }),
+        expect.objectContaining({
+          source_domain: "example.com",
+          evidence_type: "independent_review",
+          source_type: "expert_guide",
+          specificity: "same_brand_category",
+          concrete_insight: expect.stringContaining("fabric quality")
+        })
+      ])
+    );
+    expect(result.analysis?.key_external_insights).toEqual(expect.arrayContaining([expect.stringContaining("cotton oxford fabric")]));
+    expect(result.analysis?.external_coverage).toBe("moderate");
+    expect(result.analysis?.useful_sources_count).toBe(2);
+    expect(result.analysis?.external_score_impact).toBe("medium");
     expect(result.analysis?.public_evidence).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          sourceType: "official",
-          specificity: "exact_product",
-          dimension: "fabric",
-          claim: expect.stringContaining("Cotton 100%")
-        }),
-        expect.objectContaining({
-          sourceType: "official",
-          specificity: "exact_product",
-          claim: expect.stringContaining("Made in Japan")
-        }),
-        expect.objectContaining({
-          sourceType: "official",
-          specificity: "exact_product",
-          claim: expect.stringContaining("5.0/5 from 3 reviews")
-        }),
-        expect.objectContaining({
           sourceType: "expert_review",
           specificity: "exact_product",
-          dimension: "fabric",
+          dimension: "quality",
           claim: expect.stringContaining("cotton oxford fabric")
         }),
         expect.objectContaining({
           sourceType: "expert_review",
-          specificity: "same_brand_category",
           claim: expect.stringContaining("fabric quality")
         })
+      ])
+    );
+    expect(result.analysis?.public_evidence).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ sourceType: "official" })
       ])
     );
     expect(result.analysis?.verdict.evidence_score_effects).toEqual(expect.arrayContaining([expect.stringContaining("fabric")]));
@@ -641,6 +688,480 @@ describe("quality-check API", () => {
     expect(result.analysis?.verdict.reasoning_flags).not.toContain("material_composition_not_found");
     expect(result.analysis?.verdict.scores.quality).toBeGreaterThan(5.6);
     expect(result.analysis?.verdict.scores.value).toBeGreaterThan(5.6);
+  });
+
+  it("does not count UNIQLO first-party Oxford Shirt results as external evidence", async () => {
+    const payload = createPayload({ imageUrls: [] });
+    payload.page.url = "https://www.uniqlo.com/uk/en/products/E462369-000/00";
+    payload.page.title = "Oxford Shirt | UNIQLO";
+    payload.page.visibleText = "Oxford Shirt. UNIQLO. 100% Cotton. Product ID: E462369-000.";
+    payload.page.product.fields.title = field("Oxford Shirt");
+    payload.page.product.fields.brand = field("UNIQLO");
+    payload.page.product.fields.materials = field("100% Cotton");
+    payload.classification = {
+      ...payload.classification,
+      category: "shirt",
+      brand: "UNIQLO",
+      brand_tier: "high-street",
+      material_family: "cotton",
+      material_description: "100% Cotton.",
+      quality_signals: ["stated on page: single-fibre natural material composition"],
+      source_confidence_score: 0.86,
+      source_confidence_label: "high"
+    };
+
+    const result = await handleQualityCheckPayload(payload, {
+      env: testEnv({ OPENAI_API_KEY: "test-openai-key", QUALITY_CHECK_PUBLIC_EVIDENCE_SEARCH: "enabled" }),
+      requestId: () => "uniqlo-oxford-external-none",
+      fetcher: async () =>
+        Response.json({
+          output_text: JSON.stringify({
+            external_sources_found: true,
+            useful_sources_count: 1,
+            external_evidence_quality: "moderate",
+            external_score_impact: "medium",
+            evidence: [
+              {
+                source_domain: "uniqlo.com",
+                source_url: "https://www.uniqlo.com/uk/en/products/E462369-000/00",
+                evidence_type: "exact_product",
+                specificity: "exact_product",
+                claim: "UNIQLO Oxford Shirt Product ID E462369-000 is 100% cotton.",
+                quote: "100% cotton",
+                relevance_score: 0.9,
+                confidence: 0.8,
+                affects: ["quality", "value"],
+                reason_included: "Model incorrectly returned same-retailer evidence."
+              }
+            ],
+            rejected_sources: [
+              {
+                source_domain: "faq.uniqlo.com",
+                source_url: "https://faq.uniqlo.com/uk/en/",
+                evidence_type: "brand_reputation",
+                specificity: "brand_general",
+                claim: "Official UNIQLO product details and care information.",
+                reason_rejected: "same-retailer source"
+              }
+            ]
+          })
+        })
+    });
+
+    expect(result.analysis?.page_evidence).toEqual(
+      expect.arrayContaining([expect.objectContaining({ source_domain: "uniqlo.com", claim: expect.stringContaining("100% Cotton") })])
+    );
+    expect(result.analysis?.external_evidence).toEqual([]);
+    expect(result.analysis?.benchmark_evidence).toEqual([]);
+    expect(result.analysis?.public_evidence).toEqual([]);
+    expect(result.analysis?.external_coverage).toBe("none");
+    expect(result.analysis?.rejected_sources).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ source_domain: "uniqlo.com", reason_rejected: expect.stringContaining("same-retailer") })
+      ])
+    );
+    expect(result.analysis?.verdict.reasoning_flags).toContain("external_evidence_none");
+    expect(result.analysis?.verdict.scores.confidence).toBeLessThan(payload.classification.source_confidence_score);
+  });
+
+  it("uses the AI Evidence Agent and separates UNIQLO Oxford external and benchmark evidence", async () => {
+    const payload = createPayload({ imageUrls: [] });
+    payload.page.url = "https://www.uniqlo.com/uk/en/products/E450259-000/01?colorDisplayCode=01&sizeDisplayCode=004";
+    payload.page.title = "Men's Regular Fit Oxford Shirt | UNIQLO";
+    payload.page.visibleText = "Men's Regular Fit Oxford Shirt. UNIQLO. Product ID: E450259-000. 100% Cotton. £29.90.";
+    payload.page.product.fields.title = field("Men's Regular Fit Oxford Shirt");
+    payload.page.product.fields.brand = field("UNIQLO");
+    payload.page.product.fields.materials = field("100% Cotton");
+    payload.page.product.fields.price = field("£29.90");
+    payload.classification = {
+      ...payload.classification,
+      category: "shirt",
+      brand: "UNIQLO",
+      brand_tier: "high-street",
+      price: "£29.90",
+      material_family: "cotton",
+      material_description: "100% Cotton.",
+      quality_signals: ["stated on page: single-fibre natural material composition"],
+      source_confidence_score: 0.86,
+      source_confidence_label: "high"
+    };
+
+    const fetchedUrls: string[] = [];
+    const result = await handleQualityCheckPayload(payload, {
+      env: testEnv({ OPENAI_API_KEY: "test-openai-key", QUALITY_CHECK_PUBLIC_EVIDENCE_SEARCH: "enabled" }),
+      requestId: () => "uniqlo-oxford-ai-evidence-agent",
+      fetcher: async (input) => {
+        fetchedUrls.push(String(input));
+        return Response.json({
+          output_text: JSON.stringify({
+            external_sources_found: true,
+            useful_sources_count: 2,
+            external_evidence_quality: "moderate",
+            external_score_impact: "medium",
+            evidence: [
+              {
+                source_domain: "reddit.com",
+                source_url: "https://www.reddit.com/r/frugalmalefashion/comments/1c4cr7/uniqlo_oxford_shirts_sizing_impressions/",
+                evidence_type: "independent_review",
+                specificity: "same_line",
+                claim: "Uniqlo's Slim Fit Oxford measurements and fit are discussed against other shirts.",
+                quote: "Uniqlo Oxford Shirts: Sizing Impressions",
+                relevance_score: 0.76,
+                confidence: 0.62,
+                affects: ["value", "confidence"],
+                reason_included: "Independent discussion of the same UNIQLO Oxford shirt lane."
+              },
+              {
+                source_domain: "insidehook.com",
+                source_url: "https://www.insidehook.com/style/best-oxford-shirts-men",
+                evidence_type: "category_benchmark",
+                specificity: "category",
+                claim: "The Affordable Option: Uniqlo Oxford Slim Fit Long-Sleeve Shirt, $40, compared with other Oxford shirts.",
+                quote: "The Affordable Option",
+                relevance_score: 0.72,
+                confidence: 0.58,
+                affects: ["value"],
+                reason_included: "Relevant Oxford shirt category benchmark."
+              },
+              {
+                source_domain: "uniqlo.com",
+                source_url: "https://www.uniqlo.com/uk/en/products/E450259-000/01/reviews",
+                evidence_type: "exact_product",
+                specificity: "exact_product",
+                claim: "View reviews for men's Regular Fit Oxford Shirt at UNIQLO UK.",
+                quote: "UNIQLO UK reviews",
+                relevance_score: 0.9,
+                confidence: 0.8,
+                affects: ["quality"],
+                reason_included: "Same-retailer result should be rejected locally."
+              }
+            ],
+            rejected_sources: []
+          })
+        });
+      }
+    });
+
+    expect(fetchedUrls.every((url) => url === "https://api.openai.com/v1/responses")).toBe(true);
+    expect(fetchedUrls.some((url) => url.includes("duckduckgo.com"))).toBe(false);
+    expect(result.analysis?.external_evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source_domain: "reddit.com",
+          evidence_type: "independent_review",
+          source_type: "reddit",
+          theme: "fit",
+          concrete_insight: expect.stringContaining("Slim Fit Oxford")
+        })
+      ])
+    );
+    expect(result.analysis?.external_evidence).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ source_domain: "uniqlo.com" })])
+    );
+    expect(result.analysis?.benchmark_evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source_domain: "insidehook.com",
+          evidence_type: "category_benchmark",
+          source_type: "editorial_review",
+          claim: expect.stringContaining("Affordable Option")
+        })
+      ])
+    );
+    expect(result.analysis?.external_coverage).toBe("moderate");
+    expect(result.analysis?.rejected_sources).toEqual(
+      expect.arrayContaining([expect.objectContaining({ source_domain: "uniqlo.com", reason_rejected: expect.stringContaining("same-retailer") })])
+    );
+  });
+
+  it("keeps Reddit/forum evidence and synthesizes repeated shopper themes", async () => {
+    const payload = createPayload({ imageUrls: [] });
+    payload.page.url = "https://www.uniqlo.com/uk/en/products/E450259-000/01";
+    payload.page.title = "Men's Regular Fit Oxford Shirt | UNIQLO";
+    payload.page.visibleText = "Men's Regular Fit Oxford Shirt. UNIQLO. Product ID: E450259-000. 100% Cotton. £29.90.";
+    payload.page.product.fields.title = field("Men's Regular Fit Oxford Shirt");
+    payload.page.product.fields.brand = field("UNIQLO");
+    payload.page.product.fields.materials = field("100% Cotton");
+    payload.classification = {
+      ...payload.classification,
+      category: "shirt",
+      brand: "UNIQLO",
+      brand_tier: "high-street",
+      price: "£29.90",
+      material_family: "cotton",
+      material_description: "100% Cotton."
+    };
+
+    const result = await handleQualityCheckPayload(payload, {
+      env: testEnv({ OPENAI_API_KEY: "test-openai-key", QUALITY_CHECK_PUBLIC_EVIDENCE_SEARCH: "enabled" }),
+      requestId: () => "uniqlo-repeated-shopper-themes",
+      fetcher: async () =>
+        Response.json({
+          output_text: JSON.stringify({
+            external_sources_found: true,
+            useful_sources_count: 3,
+            external_evidence_quality: "moderate",
+            external_score_impact: "low",
+            evidence: [
+              {
+                source_domain: "reddit.com",
+                source_url: "https://www.reddit.com/r/malefashionadvice/comments/example/uniqlo_oxford_shrinkage/",
+                evidence_type: "independent_review",
+                source_type: "reddit",
+                specificity: "same_brand_category",
+                concrete_insight: "UNIQLO Oxford shoppers repeatedly warn that fit can tighten after washing.",
+                theme: "shrinkage",
+                sentiment: "negative",
+                quote_or_snippet: "fit can tighten after washing",
+                applies_to_product: "partially",
+                score_dimensions_affected: ["confidence"],
+                claim: "UNIQLO Oxford shoppers repeatedly warn that fit can tighten after washing.",
+                quote: "fit can tighten after washing",
+                relevance_score: 0.76,
+                confidence: 0.52,
+                affects: ["confidence"],
+                reason_included: "Same-brand-category Reddit pattern about Oxford shirt shrinkage."
+              },
+              {
+                source_domain: "styleforum.net",
+                source_url: "https://www.styleforum.net/threads/uniqlo-ocbd-fit-after-washing.123/",
+                evidence_type: "independent_review",
+                source_type: "forum",
+                specificity: "same_brand_category",
+                concrete_insight: "Forum users discuss UNIQLO OCBD sizing with shrinkage after washing as the main risk.",
+                theme: "shrinkage",
+                sentiment: "mixed",
+                quote_or_snippet: "shrinkage after washing",
+                applies_to_product: "partially",
+                score_dimensions_affected: ["confidence"],
+                claim: "Forum users discuss UNIQLO OCBD sizing with shrinkage after washing as the main risk.",
+                quote: "shrinkage after washing",
+                relevance_score: 0.72,
+                confidence: 0.5,
+                affects: ["confidence"],
+                reason_included: "Forum discussion repeats the same washing-fit risk."
+              },
+              {
+                source_domain: "gq.com",
+                source_url: "https://www.gq.com/story/best-oxford-shirts",
+                evidence_type: "category_benchmark",
+                source_type: "editorial_review",
+                specificity: "category_general",
+                concrete_insight: "Oxford shirt buying guides treat shrinkage after washing as a benchmark fit concern.",
+                theme: "shrinkage",
+                sentiment: "neutral",
+                quote_or_snippet: "shrinkage after washing",
+                applies_to_product: "generally",
+                score_dimensions_affected: ["value", "confidence"],
+                claim: "Oxford shirt buying guides treat shrinkage after washing as a benchmark fit concern.",
+                quote: "shrinkage after washing",
+                relevance_score: 0.68,
+                confidence: 0.56,
+                affects: ["value", "confidence"],
+                reason_included: "Editorial category benchmark defines a shopper criterion."
+              }
+            ],
+            key_external_insights: [],
+            repeated_themes: [],
+            conflicting_evidence: [],
+            evidence_gaps: [],
+            cross_source_themes: [],
+            rejected_sources: []
+          })
+        })
+    });
+
+    expect(result.analysis?.external_evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ source_domain: "reddit.com", source_type: "reddit", theme: "shrinkage" }),
+        expect.objectContaining({ source_domain: "styleforum.net", source_type: "forum", theme: "shrinkage" })
+      ])
+    );
+    expect(result.analysis?.repeated_themes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          theme: "shrinkage",
+          source_count: 3,
+          source_types: expect.arrayContaining(["reddit", "forum", "editorial_review"]),
+          score_dimensions_affected: expect.arrayContaining(["confidence"])
+        })
+      ])
+    );
+    expect(result.analysis?.key_external_insights).toEqual(expect.arrayContaining([expect.stringContaining("shrinkage")]));
+  });
+
+  it("rejects generic weak sources and keeps them out of scoring", async () => {
+    const payload = createPayload({ imageUrls: [] });
+    payload.page.url = "https://www.uniqlo.com/uk/en/products/E450259-000/01?colorDisplayCode=01&sizeDisplayCode=004";
+    payload.page.title = "Men's Regular Fit Oxford Shirt | UNIQLO";
+    payload.page.visibleText = "Men's Regular Fit Oxford Shirt. UNIQLO. Product ID: E450259-000. 100% Cotton. £29.90.";
+    payload.page.product.fields.title = field("Men's Regular Fit Oxford Shirt");
+    payload.page.product.fields.brand = field("UNIQLO");
+    payload.page.product.fields.materials = field("100% Cotton");
+    payload.page.product.fields.price = field("£29.90");
+    payload.classification = {
+      ...payload.classification,
+      category: "shirt",
+      brand: "UNIQLO",
+      brand_tier: "high-street",
+      price: "£29.90",
+      material_family: "cotton",
+      material_description: "100% Cotton.",
+      source_confidence_score: 0.86,
+      source_confidence_label: "high"
+    };
+
+    const result = await handleQualityCheckPayload(payload, {
+      env: testEnv({ OPENAI_API_KEY: "test-openai-key", QUALITY_CHECK_PUBLIC_EVIDENCE_SEARCH: "enabled" }),
+      requestId: () => "uniqlo-ai-evidence-agent-validation",
+      fetcher: async (input) => {
+        const url = String(input);
+        if (url === "https://api.openai.com/v1/responses") {
+          return Response.json({
+            output_text: JSON.stringify({
+              external_sources_found: true,
+              useful_sources_count: 3,
+              external_evidence_quality: "moderate",
+              external_score_impact: "high",
+              evidence: [
+                {
+                  source_domain: "blankapparel.example",
+                  source_url: "https://blankapparel.example/wholesale-t-shirts",
+                  evidence_type: "category_benchmark",
+                  specificity: "category",
+                  claim: "Wholesale blank T-shirts can be bought in bulk at low prices.",
+                  quote: "wholesale blank T-shirts",
+                  relevance_score: 0.7,
+                  confidence: 0.7,
+                  affects: ["value"],
+                  reason_included: "Model incorrectly returned unrelated wholesale T-shirts."
+                },
+                {
+                  source_domain: "insidehook.com",
+                  source_url: "https://www.insidehook.com/style/best-oxford-shirts-men",
+                  evidence_type: "category_benchmark",
+                  specificity: "category",
+                  claim: "InsideHook lists Oxford shirts at several price points, including affordable high-street options.",
+                  quote: "best Oxford shirts",
+                  relevance_score: 0.69,
+                  confidence: 0.56,
+                  affects: ["value"],
+                  reason_included: "Relevant Oxford shirt category price benchmark."
+                }
+              ],
+              rejected_sources: []
+            })
+          });
+        }
+        return new Response("model unavailable", { status: 500 });
+      }
+    });
+
+    expect(result.analysis?.external_evidence).toEqual([]);
+    expect(result.analysis?.benchmark_evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ source_domain: "insidehook.com", evidence_type: "category_benchmark", source_type: "editorial_review" })
+      ])
+    );
+    expect(result.analysis?.rejected_sources).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ source_domain: "blankapparel.example", reason_rejected: expect.stringContaining("generic") })
+      ])
+    );
+    expect(result.analysis?.external_coverage).toBe("limited");
+    expect(result.analysis?.external_score_impact).toBe("low");
+    expect(result.analysis?.verdict.evidence_score_effects).not.toEqual(
+      expect.arrayContaining([expect.stringContaining("blank T-shirts")])
+    );
+  });
+
+  it("keeps category-only AI evidence limited even when multiple relevant benchmark sources exist", async () => {
+    const payload = createPayload({ imageUrls: [] });
+    payload.page.url = "https://www.uniqlo.com/uk/en/products/E450259-000/01";
+    payload.page.title = "Men's Regular Fit Oxford Shirt | UNIQLO";
+    payload.page.visibleText = "Men's Regular Fit Oxford Shirt. UNIQLO. Product ID: E450259-000. 100% Cotton. £29.90.";
+    payload.page.product.fields.title = field("Men's Regular Fit Oxford Shirt");
+    payload.page.product.fields.brand = field("UNIQLO");
+    payload.classification = {
+      ...payload.classification,
+      category: "shirt",
+      brand: "UNIQLO",
+      price: "£29.90",
+      material_family: "cotton"
+    };
+
+    const result = await handleQualityCheckPayload(payload, {
+      env: testEnv({ OPENAI_API_KEY: "test-openai-key", QUALITY_CHECK_PUBLIC_EVIDENCE_SEARCH: "enabled" }),
+      requestId: () => "uniqlo-openai-annotations",
+      fetcher: async (input) => {
+        const url = String(input);
+        if (url === "https://api.openai.com/v1/responses") {
+          return Response.json({
+            output_text: JSON.stringify({
+              external_sources_found: true,
+              useful_sources_count: 2,
+              external_evidence_quality: "moderate",
+              external_score_impact: "medium",
+              evidence: [
+                {
+                  source_domain: "gq.com",
+                  source_url: "https://www.gq.com/story/best-white-button-down-shirt-for-men-style",
+                  evidence_type: "category_benchmark",
+                  specificity: "category",
+                  claim: "GQ recommended budget-friendly Oxford/button-down shirt options in the same category lane.",
+                  quote: "budget-friendly choice",
+                  relevance_score: 0.68,
+                  confidence: 0.55,
+                  affects: ["value"],
+                  reason_included: "Relevant category price benchmark, not exact-product proof."
+                },
+                {
+                  source_domain: "esquire.com",
+                  source_url: "https://www.esquire.com/style/mens-fashion/g1874/best-button-up-shirts-2014/",
+                  evidence_type: "category_benchmark",
+                  specificity: "category",
+                  claim: "Esquire included Oxford/button-down shirts in a category roundup.",
+                  quote: "best Oxford shirts roundup",
+                  relevance_score: 0.66,
+                  confidence: 0.54,
+                  affects: ["value"],
+                  reason_included: "Relevant category benchmark."
+                },
+                {
+                  source_domain: "uniqlo.com",
+                  source_url: "https://www.uniqlo.com/uk/en/products/E450259-000/01",
+                  evidence_type: "exact_product",
+                  specificity: "exact_product",
+                  claim: "First-party source should be filtered.",
+                  quote: "UNIQLO product page",
+                  relevance_score: 0.9,
+                  confidence: 0.8,
+                  affects: ["quality"],
+                  reason_included: "Same-retailer result should be rejected locally."
+                }
+              ],
+              rejected_sources: []
+            })
+          });
+        }
+        return new Response("model unavailable", { status: 500 });
+      }
+    });
+
+    expect(result.analysis?.external_evidence).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ source_domain: "uniqlo.com" })])
+    );
+    expect(result.analysis?.benchmark_evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ source_domain: "gq.com", evidence_type: "category_benchmark", source_type: "editorial_review" }),
+        expect.objectContaining({ source_domain: "esquire.com", evidence_type: "category_benchmark", source_type: "editorial_review" })
+      ])
+    );
+    expect(result.analysis?.external_coverage).toBe("limited");
+    expect(result.analysis?.external_score_impact).toBe("low");
+    expect(result.analysis?.rejected_sources).toEqual(
+      expect.arrayContaining([expect.objectContaining({ source_domain: "uniqlo.com", reason_rejected: expect.stringContaining("same-retailer") })])
+    );
   });
 });
 

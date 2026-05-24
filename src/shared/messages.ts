@@ -157,6 +157,10 @@ export type PublicEvidenceSpecificity =
   | "exact_product"
   | "same_line"
   | "same_brand_category"
+  | "close_competitor"
+  | "category"
+  | "category_general"
+  | "material_context"
   | "brand_general";
 
 export type PublicEvidenceDimension =
@@ -181,6 +185,109 @@ export type PublicEvidenceItem = {
   url: string;
   quote?: string;
   date?: string;
+};
+
+export type PageEvidenceItem = {
+  source_domain: string;
+  source_url: string;
+  claim: string;
+  quote: string;
+  confidence: number;
+  date?: string;
+};
+
+export type ExternalEvidenceSourceType =
+  | "exact_product"
+  | "third_party_retailer"
+  | "independent_review"
+  | "similar_product"
+  | "competitor_benchmark"
+  | "brand_reputation"
+  | "category_benchmark"
+  | "material_context";
+
+export type ExternalEvidenceCoverage = "none" | "limited" | "moderate" | "strong";
+
+export type ExternalScoreImpact = "none" | "low" | "medium" | "high";
+
+export type ExternalEvidenceAffects = "quality" | "value" | "durability" | "aesthetic" | "confidence";
+
+export type ShopperEvidenceSourceType =
+  | "reddit"
+  | "editorial_review"
+  | "retailer_listing"
+  | "forum"
+  | "blog"
+  | "expert_guide";
+
+export type EvidenceInsightTheme =
+  | "fabric_weight"
+  | "fit"
+  | "shrinkage"
+  | "durability"
+  | "construction"
+  | "price_value"
+  | "brand_reputation"
+  | "comfort"
+  | "style";
+
+export type ProductApplicability = "directly" | "partially" | "generally";
+
+export type ExternalEvidenceItem = {
+  source_domain: string;
+  source_url: string;
+  evidence_type: ExternalEvidenceSourceType;
+  source_type: ShopperEvidenceSourceType;
+  specificity: PublicEvidenceSpecificity;
+  concrete_insight: string;
+  theme: EvidenceInsightTheme;
+  sentiment: PublicEvidenceSentiment;
+  quote_or_snippet: string;
+  applies_to_product: ProductApplicability;
+  score_dimensions_affected: ExternalEvidenceAffects[];
+  claim: string;
+  quote: string;
+  relevance_score: number;
+  confidence: number;
+  affects: ExternalEvidenceAffects[];
+  reason_included: string;
+  freshness?: string;
+  date?: string;
+};
+
+export type RejectedExternalSource = {
+  source_domain: string;
+  source_url: string;
+  evidence_type?: ExternalEvidenceSourceType | string;
+  specificity?: PublicEvidenceSpecificity | string;
+  claim?: string;
+  reason_rejected: string;
+};
+
+export type CrossSourceTheme = {
+  theme: EvidenceInsightTheme;
+  summary: string;
+  sentiment: PublicEvidenceSentiment;
+  source_count: number;
+  source_types: ShopperEvidenceSourceType[];
+  specificity: PublicEvidenceSpecificity;
+  applies_to_product: ProductApplicability;
+  score_dimensions_affected: ExternalEvidenceAffects[];
+  supporting_sources: string[];
+};
+
+export type ExternalEvidenceAgentPack = {
+  external_sources_found: boolean;
+  useful_sources_count: number;
+  external_evidence_quality: ExternalEvidenceCoverage;
+  external_score_impact: ExternalScoreImpact;
+  evidence: ExternalEvidenceItem[];
+  key_external_insights: string[];
+  repeated_themes: CrossSourceTheme[];
+  conflicting_evidence: string[];
+  evidence_gaps: string[];
+  cross_source_themes: CrossSourceTheme[];
+  rejected_sources: RejectedExternalSource[];
 };
 
 export type VisualObservationConfidence = "high" | "medium" | "low";
@@ -363,6 +470,21 @@ export type BackendAnalysis = {
     source_confidence_label: SourceConfidenceLabel;
   };
   classification: ProductClassification;
+  page_evidence: PageEvidenceItem[];
+  external_evidence: ExternalEvidenceItem[];
+  benchmark_evidence: ExternalEvidenceItem[];
+  external_coverage: ExternalEvidenceCoverage;
+  external_sources_found: boolean;
+  useful_sources_count: number;
+  external_score_impact: ExternalScoreImpact;
+  rejected_sources: RejectedExternalSource[];
+  key_external_insights: string[];
+  repeated_themes: CrossSourceTheme[];
+  conflicting_evidence: string[];
+  evidence_gaps: string[];
+  cross_source_themes: CrossSourceTheme[];
+  external_search_diagnostics?: string[];
+  external_evidence_pack?: ExternalEvidenceAgentPack;
   public_evidence: PublicEvidenceItem[];
   visual_enrichment: BackendVisualEnrichmentResult;
   verdict: Stage6Verdict;

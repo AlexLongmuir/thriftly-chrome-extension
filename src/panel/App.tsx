@@ -43,13 +43,12 @@ export function App() {
   const productBrand = analysis?.classification.brand || getFieldValue(extraction?.snapshot.product.fields.brand.value) || getDomain(extraction?.snapshot.url);
   const productPrice = analysis?.classification.price || getFieldValue(extraction?.snapshot.product.fields.price.value);
   const productImage = extraction?.snapshot.product.imageUrls[0] ?? null;
-  const statusLabel = statusLabels[status];
   const lifespan = analysis ? estimateLifespan(analysis.verdict.scores.durability, monthlyWears, analysis.verdict.confidence_label) : null;
+  const isChecking = status === "extracting" || status === "sending";
 
   async function handleRunCheck() {
     setStatus("extracting");
     setError(null);
-    setVerdict(null);
 
     try {
       const activeTabExtraction = await requestActiveTabExtraction();
@@ -68,29 +67,6 @@ export function App() {
 
   return (
     <main className="panel-shell">
-      <header className="topbar">
-        <div className="brand-mark" aria-hidden="true">
-          QC
-        </div>
-        <div className="topbar-copy">
-          <div>
-            <h1>Quality Check</h1>
-            {extraction?.snapshot.url ? <p>{getDomain(extraction.snapshot.url)}</p> : <p>Clothing page verdict</p>}
-          </div>
-          <span className={`status-pill status-pill--${status}`}>{statusLabel}</span>
-        </div>
-      </header>
-
-      <section className="action-strip">
-        <div>
-          <p className="eyebrow">Active tab</p>
-          <p>{status === "idle" ? "Extract product evidence and run the verdict." : statusDescriptions[status]}</p>
-        </div>
-        <button className="primary-button" type="button" onClick={handleRunCheck} disabled={status === "extracting" || status === "sending"}>
-          {status === "extracting" || status === "sending" ? "Checking" : verdict ? "Refresh" : "Run check"}
-        </button>
-      </section>
-
       {error ? (
         <section className="notice notice--error">
           <h2>Check failed</h2>
@@ -98,26 +74,23 @@ export function App() {
         </section>
       ) : null}
 
-      {status === "extracting" || status === "sending" ? <LoadingPanel status={status} /> : null}
-
       {analysis ? (
         <>
-          <ProductSummary title={productTitle} brand={productBrand} price={productPrice} imageUrl={productImage} classification={analysis.classification} />
-          <RecommendationPanel verdict={analysis.verdict} />
-          <MainVerdict verdict={analysis.verdict} />
-          <ScoreSection verdict={analysis.verdict} />
-          <MaterialSection classification={analysis.classification} />
-          <SignalSection title="Quality signals" items={analysis.classification.quality_signals} emptyLabel="No positive quality signals found." />
-          <SignalSection title="Watch-outs" items={watchOutsFor(analysis)} emptyLabel="No material watch-outs found." />
-          <EvidenceSection analysis={analysis} />
-          {lifespan ? (
-            <LifespanSection
-              monthlyWears={monthlyWears}
-              onMonthlyWearsChange={setMonthlyWears}
-              lifespan={lifespan}
-            />
-          ) : null}
+          <ProductHero
+            title={productTitle}
+            brand={productBrand}
+            price={productPrice}
+            imageUrl={productImage}
+            verdict={analysis.verdict}
+            status={status}
+            onRefresh={handleRunCheck}
+            disabled={isChecking}
+          />
+          <DescriptionSection verdict={analysis.verdict} />
+          <SignsSection title="Positive signs" tone="positive" items={placeholderGoodSigns} />
+          <SignsSection title="Watch-outs" tone="negative" items={placeholderWatchOuts} />
           <AlternativesSection approvedExamples={analysis.approved_examples} />
+          <HowScoresSection verdict={analysis.verdict} />
         </>
       ) : extraction && classification ? (
         <>
@@ -128,7 +101,7 @@ export function App() {
           </section>
         </>
       ) : status === "idle" ? (
-        <EmptyState />
+        <EmptyState onRunCheck={handleRunCheck} />
       ) : null}
 
       <section className="debug-shell">
@@ -137,36 +110,129 @@ export function App() {
           <span>{debugOpen ? "Hide" : "Show"}</span>
         </button>
         {debugOpen ? (
-          <DebugPanel
-            extraction={extraction}
-            classification={classification}
-            visualEnrichment={visualEnrichment}
-            verdict={verdict}
-          />
+          <div className="debug-stack">
+            {analysis ? (
+              <LegacyDebugSections
+                analysis={analysis}
+                monthlyWears={monthlyWears}
+                onMonthlyWearsChange={setMonthlyWears}
+                lifespan={lifespan}
+              />
+            ) : null}
+            <DebugPanel
+              extraction={extraction}
+              classification={classification}
+              visualEnrichment={visualEnrichment}
+              verdict={verdict}
+            />
+          </div>
         ) : null}
       </section>
     </main>
   );
 }
 
-function LoadingPanel({ status }: { status: Status }) {
+function EmptyState({ onRunCheck }: { onRunCheck: () => void }) {
   return (
-    <section className="panel-section loading-section">
-      <div className="spinner" aria-hidden="true" />
-      <div>
-        <h2>{status === "extracting" ? "Reading the product page" : "Analysing the evidence"}</h2>
-        <p>{status === "extracting" ? "Collecting structured data, page text, images and source confidence." : "Sending the captured product evidence to the quality verdict backend."}</p>
+    <section className="empty-state">
+      <p className="eyebrow">No verdict yet</p>
+      <h2>Open a clothing product page, then run the check.</h2>
+      <p>Scouted by Thriftly reads the active product page and returns a clear clothing purchase verdict.</p>
+      <button className="primary-button" type="button" onClick={onRunCheck}>
+        Run check
+      </button>
+    </section>
+  );
+}
+
+function ProductHero({
+  title,
+  brand,
+  price,
+  imageUrl,
+  verdict,
+  status,
+  onRefresh,
+  disabled
+}: {
+  title: string;
+  brand: string;
+  price: string | null;
+  imageUrl: string | null;
+  verdict: Stage6Verdict;
+  status: Status;
+  onRefresh: () => void;
+  disabled: boolean;
+}) {
+  const score = scoreOutOf100(verdict.overall_rating);
+  const tone = scoreTone(score);
+
+  return (
+    <section className="scouted-hero">
+      <div className="scouted-product-image" aria-label={imageUrl ? "Product image" : "Product image unavailable"}>
+        {imageUrl ? <img src={imageUrl} alt="" /> : <span>Image unavailable</span>}
+      </div>
+      <div className="scouted-product-copy">
+        <div className="brand-line">
+          <p>{brand}</p>
+          <button className="refresh-button" type="button" onClick={onRefresh} disabled={disabled}>
+            {status === "extracting" ? "Reading" : status === "sending" ? "Analysing" : "Refresh"}
+          </button>
+        </div>
+        <div className="item-line">
+          <h2>{title}</h2>
+          {price ? <span>{price}</span> : null}
+        </div>
+        <div className="grade-line">
+          <div className={`grade-tile grade-tile--${tone}`}>{gradeFor(verdict.overall_rating)}</div>
+          <div className="grade-meta">
+            <strong className={`score-text score-text--${tone}`}>{score}/100</strong>
+            <span className={`recommendation-tag recommendation-tag--${verdict.recommendation}`}>{formatLabel(verdict.recommendation)}</span>
+          </div>
+        </div>
       </div>
     </section>
   );
 }
 
-function EmptyState() {
+function DescriptionSection({ verdict }: { verdict: Stage6Verdict }) {
   return (
-    <section className="empty-state">
-      <p className="eyebrow">No verdict yet</p>
-      <h2>Open a clothing product page, then run the check.</h2>
-      <p>The panel will show the recommendation first, then the evidence and confidence behind it.</p>
+    <section className="description-section">
+      <h2>{verdict.recommendation_summary}</h2>
+      <p>{verdict.summary}</p>
+    </section>
+  );
+}
+
+type SignItem = {
+  label: string;
+  detail: string;
+  related_metric: "quality" | "value" | "durability" | "style";
+  strength?: "low" | "medium" | "high";
+  severity?: "low" | "medium" | "high";
+};
+
+function SignsSection({ title, tone, items }: { title: string; tone: "positive" | "negative"; items: SignItem[] }) {
+  return (
+    <section className="panel-section sign-section">
+      <SectionHeader title={title} />
+      <div className="sign-list">
+        {items.map((item) => {
+          const level = item.strength ?? item.severity ?? "medium";
+          return (
+            <div className="sign-row" key={`${title}-${item.label}`}>
+              <div className="sign-icon" aria-hidden="true">
+                {metricInitial(item.related_metric)}
+              </div>
+              <div>
+                <strong>{item.label}</strong>
+                <p>{item.detail}</p>
+              </div>
+              <span className={`signal-dot signal-dot--${tone}-${level}`} aria-label={`${level} ${tone} signal`} />
+            </div>
+          );
+        })}
+      </div>
     </section>
   );
 }
@@ -293,9 +359,16 @@ function SignalSection({ title, items, emptyLabel }: { title: string; items: str
 }
 
 function EvidenceSection({ analysis }: { analysis: BackendAnalysis }) {
+  const externalDomains = [
+    ...analysis.external_evidence.map((item) => item.source_domain),
+    ...analysis.benchmark_evidence.map((item) => item.source_domain)
+  ].filter((domain, index, domains) => domain && domains.indexOf(domain) === index);
   const evidenceItems = [
     `Page state: ${formatLabel(analysis.product.page_state)}`,
     `Source confidence: ${analysis.product.source_confidence_label} (${analysis.product.source_confidence_score.toFixed(2)})`,
+    `External evidence: ${formatExternalEvidenceQuality(analysis)}`,
+    `External score impact: ${analysis.external_score_impact}`,
+    `Source domains: ${externalDomains.length ? externalDomains.join(", ") : "none"}`,
     `Vision: ${analysis.visual_enrichment.status} · ${analysis.visual_enrichment.image_count} images`,
     `Model: ${analysis.verdict.model} · ${formatLabel(analysis.verdict.model_status)}`
   ];
@@ -310,10 +383,31 @@ function EvidenceSection({ analysis }: { analysis: BackendAnalysis }) {
           </div>
         ))}
       </div>
+      <SignalList title="Page facts" items={analysis.page_evidence.map((item) => item.claim)} emptyLabel="No first-party page facts captured" />
+      <SignalList title="Outside evidence" items={formatExternalInsightItems(analysis)} emptyLabel="No useful external insights found" />
+      <SignalList title="Repeated themes" items={analysis.repeated_themes.map((item) => `${formatLabel(item.theme)}: ${item.summary}`)} emptyLabel="No repeated external themes found" />
+      <SignalList title="Conflicting evidence" items={analysis.conflicting_evidence} emptyLabel="No conflicts found" />
+      <SignalList title="Evidence gaps" items={analysis.evidence_gaps} emptyLabel="No evidence gaps flagged" />
+      <SignalList title="Rejected sources" items={analysis.rejected_sources.map((item) => `${item.source_domain || "unknown"}: ${item.reason_rejected}`)} emptyLabel="No rejected sources returned" />
       <SignalList title="Reasoning flags" items={analysis.verdict.reasoning_flags.map(formatLabel)} emptyLabel="None" />
       <SignalList title="Missing image views" items={analysis.visual_enrichment.missing_views} emptyLabel="None flagged" />
     </section>
   );
+}
+
+function formatExternalInsightItems(analysis: BackendAnalysis): string[] {
+  const synthesized = analysis.key_external_insights.map((item) => `External insight: ${item}`);
+  const perSource = [...analysis.external_evidence, ...analysis.benchmark_evidence].map((item) => {
+    const applies = item.applies_to_product === "directly" ? "direct" : item.applies_to_product === "partially" ? "partial" : "general";
+    const dimensions = item.score_dimensions_affected.length ? item.score_dimensions_affected.map(formatLabel).join(", ") : "confidence";
+    return `${item.source_domain} · ${formatLabel(item.source_type)} · ${formatLabel(item.theme)} · ${applies}: ${item.concrete_insight} (${dimensions})`;
+  });
+  return [...synthesized, ...perSource].slice(0, 12);
+}
+
+function formatExternalEvidenceQuality(analysis: BackendAnalysis): string {
+  if (analysis.external_coverage === "none") return "none";
+  return `${analysis.external_coverage} (${analysis.useful_sources_count} useful)`;
 }
 
 function LifespanSection({
@@ -354,28 +448,217 @@ function LifespanSection({
 }
 
 function AlternativesSection({ approvedExamples }: { approvedExamples: MatchedApprovedExample[] }) {
+  const alternatives = placeholderAlternatives.map((alternative, index) => {
+    const approvedExample = approvedExamples[index];
+    return approvedExample
+      ? {
+          ...alternative,
+          rating: scoreOutOf100(approvedExample.expected_scores.value),
+          itemName: `${formatLabel(approvedExample.material_family)} ${formatLabel(approvedExample.category)}`,
+          price: approvedExample.price_band
+        }
+      : alternative;
+  });
+
   return (
-    <section className="panel-section">
-      <SectionHeader title="Other options" meta={approvedExamples.length ? "comparison anchors" : "not available yet"} />
-      {approvedExamples.length ? (
-        <div className="alternative-list">
-          {approvedExamples.slice(0, 3).map((example) => (
-            <div className="alternative-row" key={example.id}>
-              <div>
-                <strong>{example.id}</strong>
-                <span>
-                  {formatLabel(example.category)} · {formatLabel(example.material_family)} · {example.price_band}
-                </span>
-              </div>
-              <span className="mini-grade mini-grade--positive">{gradeFor(example.expected_scores.value)}</span>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <p className="muted">Better alternatives are a Stage 9 storage/recommendation feature. No alternatives were returned with this verdict.</p>
-      )}
+    <section className="panel-section alternatives-section">
+      <SectionHeader title="Alternatives" />
+      <div className="alternative-list">
+        {alternatives.slice(0, 2).map((alternative) => (
+          <AlternativeRow key={alternative.url} alternative={alternative} />
+        ))}
+      </div>
+      {alternatives.length > 2 ? (
+        <details className="view-more">
+          <summary>View more</summary>
+          <div className="alternative-list">
+            {alternatives.slice(2).map((alternative) => (
+              <AlternativeRow key={alternative.url} alternative={alternative} />
+            ))}
+          </div>
+        </details>
+      ) : null}
     </section>
   );
+}
+
+function AlternativeRow({ alternative }: { alternative: AlternativeItem }) {
+  const tone = scoreTone(alternative.rating);
+
+  return (
+    <a className="alternative-row" href={alternative.url} target="_blank" rel="noreferrer">
+      <div className="alternative-thumb">
+        {alternative.thumbnail ? <img src={alternative.thumbnail} alt="" /> : <span />}
+      </div>
+      <div className="alternative-copy">
+        <span>{alternative.brand}</span>
+        <strong>{alternative.itemName}</strong>
+      </div>
+      <div className="alternative-score">
+        <span>{alternative.price}</span>
+        <strong className={`score-text score-text--${tone}`}>{alternative.rating}/100</strong>
+      </div>
+      <span className="chevron" aria-hidden="true" />
+    </a>
+  );
+}
+
+function HowScoresSection({ verdict }: { verdict: Stage6Verdict }) {
+  const rows = [
+    { title: "Quality", score: verdict.scores.quality, verdict: verdict.verdicts.quality },
+    { title: "Value", score: verdict.scores.value, verdict: verdict.verdicts.value },
+    { title: "Durability", score: verdict.scores.durability, verdict: verdict.verdicts.durability },
+    { title: "Style", score: verdict.scores.aesthetic, verdict: verdict.verdicts.aesthetic }
+  ];
+
+  return (
+    <section className="panel-section score-explainer">
+      <SectionHeader title="How scores are calculated" />
+      <div className="score-card-list">
+        {rows.map((row) => {
+          const score = scoreOutOf100(row.score);
+          const tone = scoreTone(score);
+          return (
+            <details className="score-card" key={row.title} open={row.title === "Quality"}>
+              <summary>
+                <span>{row.title}</span>
+                <span>
+                  <strong className={`score-text score-text--${tone}`}>{score}/100</strong>
+                  <span className="chevron" aria-hidden="true" />
+                </span>
+              </summary>
+              <p>{row.verdict.verdict}</p>
+            </details>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function LegacyDebugSections({
+  analysis,
+  monthlyWears,
+  onMonthlyWearsChange,
+  lifespan
+}: {
+  analysis: BackendAnalysis;
+  monthlyWears: number;
+  onMonthlyWearsChange: (value: number) => void;
+  lifespan: LifespanEstimate | null;
+}) {
+  return (
+    <div className="legacy-debug">
+      <p className="debug-label">Previous components</p>
+      <MainVerdict verdict={analysis.verdict} />
+      <ScoreSection verdict={analysis.verdict} />
+      <MaterialSection classification={analysis.classification} />
+      <SignalSection title="Quality signals" items={analysis.classification.quality_signals} emptyLabel="No positive quality signals found." />
+      <SignalSection title="Watch-outs" items={watchOutsFor(analysis)} emptyLabel="No material watch-outs found." />
+      <EvidenceSection analysis={analysis} />
+      {lifespan ? (
+        <LifespanSection
+          monthlyWears={monthlyWears}
+          onMonthlyWearsChange={onMonthlyWearsChange}
+          lifespan={lifespan}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+type AlternativeItem = {
+  brand: string;
+  itemName: string;
+  price: string;
+  rating: number;
+  url: string;
+  thumbnail: string | null;
+};
+
+const placeholderGoodSigns: SignItem[] = [
+  {
+    label: "100% cotton",
+    detail: "Natural single-fibre material, generally a good sign for comfort and breathability.",
+    related_metric: "quality",
+    strength: "high"
+  },
+  {
+    label: "Fair price",
+    detail: "The listed price looks reasonable for a cotton Oxford shirt from a high-street retailer.",
+    related_metric: "value",
+    strength: "medium"
+  }
+];
+
+const placeholderWatchOuts: SignItem[] = [
+  {
+    label: "Limited construction detail",
+    detail: "No clear evidence on fabric weight, stitching, seams, buttons, or collar structure.",
+    related_metric: "durability",
+    severity: "medium"
+  },
+  {
+    label: "Not premium evidence",
+    detail: "The page supports a solid basic shirt, but not a premium-quality verdict.",
+    related_metric: "quality",
+    severity: "low"
+  }
+];
+
+const placeholderAlternatives: AlternativeItem[] = [
+  {
+    brand: "Uniqlo",
+    itemName: "Oxford Slim Fit Long Sleeved Shirt",
+    price: "£29.90",
+    rating: 74,
+    url: "https://www.uniqlo.com/",
+    thumbnail: null
+  },
+  {
+    brand: "Arket",
+    itemName: "Oxford Shirt",
+    price: "£59",
+    rating: 78,
+    url: "https://www.arket.com/",
+    thumbnail: null
+  },
+  {
+    brand: "Charles Tyrwhitt",
+    itemName: "Non-Iron Oxford Shirt",
+    price: "£39.75",
+    rating: 72,
+    url: "https://www.charlestyrwhitt.com/",
+    thumbnail: null
+  },
+  {
+    brand: "Mango",
+    itemName: "Regular-Fit Cotton Shirt",
+    price: "£35.99",
+    rating: 66,
+    url: "https://shop.mango.com/",
+    thumbnail: null
+  }
+];
+
+function metricInitial(metric: SignItem["related_metric"]): string {
+  const initials: Record<SignItem["related_metric"], string> = {
+    quality: "Q",
+    value: "V",
+    durability: "D",
+    style: "S"
+  };
+  return initials[metric];
+}
+
+function scoreOutOf100(score: number): number {
+  return Math.round(score * 10);
+}
+
+function scoreTone(score: number): "positive" | "neutral" | "warning" {
+  if (score >= 72) return "positive";
+  if (score >= 55) return "neutral";
+  return "warning";
 }
 
 function DebugPanel({
@@ -392,6 +675,25 @@ function DebugPanel({
   const debugPayload = {
     extracted_facts: extraction?.snapshot.product.fields ?? null,
     quality_signals: classification?.quality_signals ?? [],
+    page_evidence: verdict?.analysis?.page_evidence ?? [],
+    external_evidence: verdict?.analysis?.external_evidence ?? [],
+    benchmark_evidence: verdict?.analysis?.benchmark_evidence ?? [],
+    external_coverage: verdict?.analysis?.external_coverage ?? "none",
+    external_sources_found: verdict?.analysis?.external_sources_found ?? false,
+    useful_sources_count: verdict?.analysis?.useful_sources_count ?? 0,
+    external_score_impact: verdict?.analysis?.external_score_impact ?? "none",
+    rejected_sources: verdict?.analysis?.rejected_sources ?? [],
+    key_external_insights: verdict?.analysis?.key_external_insights ?? [],
+    repeated_themes: verdict?.analysis?.repeated_themes ?? [],
+    conflicting_evidence: verdict?.analysis?.conflicting_evidence ?? [],
+    evidence_gaps: verdict?.analysis?.evidence_gaps ?? [],
+    cross_source_themes: verdict?.analysis?.cross_source_themes ?? [],
+    external_search_diagnostics: verdict?.analysis?.external_search_diagnostics ?? [],
+    external_evidence_pack: verdict?.analysis?.external_evidence_pack ?? null,
+    external_source_domains: [
+      ...(verdict?.analysis?.external_evidence ?? []).map((item) => item.source_domain),
+      ...(verdict?.analysis?.benchmark_evidence ?? []).map((item) => item.source_domain)
+    ].filter((domain, index, domains) => domain && domains.indexOf(domain) === index),
     public_evidence: verdict?.analysis?.public_evidence ?? [],
     evidence_score_effects: verdict?.analysis?.verdict.evidence_score_effects ?? [],
     extraction,
@@ -532,19 +834,3 @@ function isLocalDebugEnvironment(): boolean {
   const manifest = chrome.runtime.getManifest();
   return !("update_url" in manifest);
 }
-
-const statusLabels: Record<Status, string> = {
-  idle: "Ready",
-  extracting: "Reading",
-  sending: "Analysing",
-  complete: "Verdict ready",
-  error: "Needs attention"
-};
-
-const statusDescriptions: Record<Status, string> = {
-  idle: "Extract product evidence and run the verdict.",
-  extracting: "Reading the active tab.",
-  sending: "Sending the evidence bundle.",
-  complete: "Verdict is up to date.",
-  error: "Review the error and retry."
-};

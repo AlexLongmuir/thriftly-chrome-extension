@@ -1,6 +1,6 @@
-# Quality Check Chrome Extension
+# Scouted by Thriftly Chrome Extension
 
-Stage 5 visual enrichment for the Quality Check Chrome extension.
+Scouted by Thriftly helps you make smarter clothing purchases by analysing product quality, value, durability, and style signals directly on the product page. Get a clear verdict before you buy, so you can avoid overpriced pieces, spot better value, and build a wardrobe that lasts.
 
 ## What is included
 
@@ -73,7 +73,7 @@ Load `dist/` in Chrome:
 2. Enable Developer mode.
 3. Click `Load unpacked`.
 4. Select this repository's `dist/` directory.
-5. Open any page and click the Quality Check extension icon.
+5. Open any page and click the Scouted by Thriftly extension icon.
 
 ## Backend connection
 
