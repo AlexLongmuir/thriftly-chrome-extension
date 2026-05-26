@@ -466,6 +466,70 @@ describe("quality-check API", () => {
     expect(results.map((result) => result.analysis?.verdict.overall_rating)).toEqual([7.2, 7.2, 7.2]);
   });
 
+  it("generates shopper-friendly good signs and watch-outs from product facts and missing evidence", async () => {
+    const result = await handleQualityCheckPayload(createPayload({ imageUrls: [] }), {
+      env: testEnv(),
+      requestId: () => "shopper-signals"
+    });
+
+    const goodSigns = result.analysis?.verdict.good_signs ?? [];
+    const watchOuts = result.analysis?.verdict.watch_outs ?? [];
+
+    expect(result.analysis?.verdict.scores).toEqual(
+      expect.objectContaining({
+        quality: expect.any(Number),
+        value: expect.any(Number),
+        durability: expect.any(Number),
+        aesthetic: expect.any(Number),
+        confidence: expect.any(Number)
+      })
+    );
+    expect(goodSigns.length).toBeGreaterThanOrEqual(3);
+    expect(goodSigns.length).toBeLessThanOrEqual(5);
+    expect(watchOuts.length).toBeGreaterThanOrEqual(3);
+    expect(watchOuts.length).toBeLessThanOrEqual(5);
+    expect(goodSigns).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          label: "Merino wool stated",
+          related_metric: "quality",
+          strength: "high",
+          confidence: "high",
+          evidence_basis: expect.arrayContaining([
+            expect.objectContaining({
+              type: "product_fact",
+              claim: expect.stringContaining("100% merino wool")
+            })
+          ])
+        }),
+        expect.objectContaining({
+          label: "Price looks fair",
+          related_metric: "value",
+          evidence_basis: expect.arrayContaining([
+            expect.objectContaining({ type: "category_explanation" }),
+            expect.objectContaining({ type: "benchmark_evidence" })
+          ])
+        })
+      ])
+    );
+    expect(watchOuts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          label: "Construction details not evidenced",
+          related_metric: "durability",
+          severity: "medium",
+          evidence_basis: expect.arrayContaining([expect.objectContaining({ type: "missing_evidence" })])
+        }),
+        expect.objectContaining({
+          label: "No accepted outside proof",
+          detail: expect.stringContaining("retailer facts"),
+          evidence_basis: expect.arrayContaining([expect.objectContaining({ type: "missing_evidence" })])
+        })
+      ])
+    );
+    expect([...goodSigns, ...watchOuts].every((item) => item.evidence_basis.length > 0)).toBe(true);
+  });
+
   it("caps weak source data and returns not_enough_info instead of strong claims", async () => {
     const payload = createPayload({ imageUrls: [] });
     payload.page.product.sourceConfidenceScore = 0.28;
@@ -688,6 +752,29 @@ describe("quality-check API", () => {
     expect(result.analysis?.verdict.reasoning_flags).not.toContain("material_composition_not_found");
     expect(result.analysis?.verdict.scores.quality).toBeGreaterThan(5.6);
     expect(result.analysis?.verdict.scores.value).toBeGreaterThan(5.6);
+    expect(result.analysis?.verdict.good_signs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          detail: expect.stringContaining("cotton oxford fabric"),
+          related_metric: "quality",
+          evidence_basis: expect.arrayContaining([
+            expect.objectContaining({
+              type: "external_evidence",
+              source: "example.com",
+              claim: expect.stringContaining("Kamakura WQGS04 review")
+            })
+          ])
+        })
+      ])
+    );
+    expect(result.analysis?.verdict.watch_outs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          label: "Care details not evidenced",
+          evidence_basis: expect.arrayContaining([expect.objectContaining({ type: "missing_evidence" })])
+        })
+      ])
+    );
   });
 
   it("does not count UNIQLO first-party Oxford Shirt results as external evidence", async () => {

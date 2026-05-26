@@ -416,6 +416,32 @@ export type DimensionVerdict = {
   evidence_type: VerdictEvidenceType;
 };
 
+export type ShopperSignalMetric = "quality" | "value" | "durability" | "style";
+
+export type ShopperSignalBasisType =
+  | "product_fact"
+  | "external_evidence"
+  | "benchmark_evidence"
+  | "category_explanation"
+  | "visual_evidence"
+  | "missing_evidence";
+
+export type ShopperSignalEvidenceBasis = {
+  type: ShopperSignalBasisType;
+  source: string;
+  claim: string;
+};
+
+export type ShopperSignal = {
+  label: string;
+  detail: string;
+  related_metric: ShopperSignalMetric;
+  strength?: "low" | "medium" | "high";
+  severity?: "low" | "medium" | "high";
+  confidence: VerdictConfidence;
+  evidence_basis: ShopperSignalEvidenceBasis[];
+};
+
 export type MatchedApprovedExample = {
   id: string;
   category: ProductCategory;
@@ -433,6 +459,8 @@ export type Stage6Verdict = {
   recommendation_summary: string;
   scores: VerdictScores;
   confidence_label: VerdictConfidence;
+  good_signs: ShopperSignal[];
+  watch_outs: ShopperSignal[];
   verdicts: {
     quality: DimensionVerdict;
     value: DimensionVerdict;

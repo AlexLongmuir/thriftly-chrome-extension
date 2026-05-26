@@ -88,7 +88,7 @@ function createMockVerdict(payload: BackendPayload): BackendVerdict {
         overall_rating: confidence < 0.45 ? 4.2 : 6.2,
         recommendation: confidence < 0.45 ? "not_enough_info" : "consider",
         recommendation_summary:
-          confidence < 0.45 ? "Not enough trustworthy product evidence to make a buying call." : "Local mock verdict; backend is not configured.",
+          confidence < 0.45 ? "Not enough evidence for a useful buying call." : "Mock verdict only; connect the backend for a real read.",
         scores: {
           quality: confidence < 0.45 ? 3.8 : 6.2,
           value: confidence < 0.45 ? 3.8 : 6.0,
@@ -97,6 +97,38 @@ function createMockVerdict(payload: BackendPayload): BackendVerdict {
           confidence
         },
         confidence_label: payload.classification.source_confidence_label,
+        good_signs: [
+          {
+            label: "Backend required",
+            detail: "Without backend analysis, these signals are placeholders.",
+            related_metric: "quality",
+            strength: "low",
+            confidence: payload.classification.source_confidence_label,
+            evidence_basis: [
+              {
+                type: "missing_evidence",
+                source: "mock backend",
+                claim: "Backend API URL is not configured."
+              }
+            ]
+          }
+        ],
+        watch_outs: [
+          {
+            label: "Mock result",
+            detail: "Do not use this fallback as a real quality call.",
+            related_metric: "quality",
+            severity: "high",
+            confidence: "high",
+            evidence_basis: [
+              {
+                type: "missing_evidence",
+                source: "mock backend",
+                claim: "Backend API URL is not configured."
+              }
+            ]
+          }
+        ],
         verdicts: {
           quality: {
             verdict: "Mock verdict only; configure the backend for Stage 6 scoring.",

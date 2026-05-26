@@ -8,6 +8,7 @@ import type {
   DimensionVerdict,
   MatchedApprovedExample,
   ProductClassification,
+  ShopperSignal,
   Stage6Verdict
 } from "../shared/messages";
 import { createBackendPayload } from "../shared/pageSnapshot";
@@ -15,6 +16,7 @@ import { createVisualEnrichment } from "../shared/visualEnrichment";
 import { requestActiveTabExtraction } from "./chromeApi";
 
 type Status = "idle" | "extracting" | "sending" | "complete" | "error";
+type ActivePage = "summary" | "alternatives" | "how-it-works";
 
 const DEFAULT_MONTHLY_WEARS = 8;
 
@@ -24,7 +26,8 @@ export function App() {
   const [extraction, setExtraction] = useState<ActiveTabExtraction | null>(null);
   const [verdict, setVerdict] = useState<BackendVerdict | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [debugOpen, setDebugOpen] = useState(isLocalDebugEnvironment());
+  const [debugOpen, setDebugOpen] = useState(false);
+  const [activePage, setActivePage] = useState<ActivePage>("summary");
 
   const classification = useMemo(
     () => (extraction ? classifyProductEvidence(extraction.snapshot.product) : null),
@@ -43,12 +46,17 @@ export function App() {
   const productBrand = analysis?.classification.brand || getFieldValue(extraction?.snapshot.product.fields.brand.value) || getDomain(extraction?.snapshot.url);
   const productPrice = analysis?.classification.price || getFieldValue(extraction?.snapshot.product.fields.price.value);
   const productImage = extraction?.snapshot.product.imageUrls[0] ?? null;
+  const detectedProductLabel = buildDetectedProductLabel(
+    getFieldValue(extraction?.snapshot.product.fields.brand.value),
+    getFieldValue(extraction?.snapshot.product.fields.title.value)
+  );
   const lifespan = analysis ? estimateLifespan(analysis.verdict.scores.durability, monthlyWears, analysis.verdict.confidence_label) : null;
   const isChecking = status === "extracting" || status === "sending";
 
   async function handleRunCheck() {
     setStatus("extracting");
     setError(null);
+    setActivePage("summary");
 
     try {
       const activeTabExtraction = await requestActiveTabExtraction();
@@ -67,80 +75,305 @@ export function App() {
 
   return (
     <main className="panel-shell">
-      {error ? (
-        <section className="notice notice--error">
-          <h2>Check failed</h2>
-          <p>{error}</p>
-        </section>
-      ) : null}
+      <TopActionBar
+        status={status}
+        onRefresh={handleRunCheck}
+        disabled={isChecking}
+        onHowItWorks={() => setActivePage("how-it-works")}
+        isHowPage={activePage === "how-it-works"}
+      />
 
-      {analysis ? (
+      {activePage === "how-it-works" ? (
+        <HowItWorksPage onBack={() => setActivePage("summary")} />
+      ) : (
         <>
-          <ProductHero
-            title={productTitle}
-            brand={productBrand}
-            price={productPrice}
-            imageUrl={productImage}
-            verdict={analysis.verdict}
-            status={status}
-            onRefresh={handleRunCheck}
-            disabled={isChecking}
-          />
-          <DescriptionSection verdict={analysis.verdict} />
-          <SignsSection title="Positive signs" tone="positive" items={placeholderGoodSigns} />
-          <SignsSection title="Watch-outs" tone="negative" items={placeholderWatchOuts} />
-          <AlternativesSection approvedExamples={analysis.approved_examples} />
-          <HowScoresSection verdict={analysis.verdict} />
-        </>
-      ) : extraction && classification ? (
-        <>
-          <ProductSummary title={productTitle} brand={productBrand} price={productPrice} imageUrl={productImage} classification={classification} />
-          <section className="notice">
-            <h2>Product evidence captured</h2>
-            <p>Backend verdict is not available yet. The raw extraction and structured classification are available in debug mode.</p>
+          {error ? (
+            <section className="notice notice--error">
+              <h2>Check Failed</h2>
+              <p>{error}</p>
+            </section>
+          ) : null}
+
+          {analysis ? (
+            activePage === "alternatives" ? (
+              <AlternativesPage approvedExamples={analysis.approved_examples} onBack={() => setActivePage("summary")} />
+            ) : (
+              <>
+                <ProductHero
+                  title={productTitle}
+                  brand={productBrand}
+                  price={productPrice}
+                  imageUrl={productImage}
+                  verdict={analysis.verdict}
+                />
+                <DescriptionSection verdict={analysis.verdict} />
+                <SignsSection title="Good Signs" tone="positive" items={analysis.verdict.good_signs} />
+                <SignsSection title="Watch-outs" tone="negative" items={analysis.verdict.watch_outs} />
+                <AlternativesSection approvedExamples={analysis.approved_examples} onViewAll={() => setActivePage("alternatives")} />
+                <HowScoresSection verdict={analysis.verdict} />
+              </>
+            )
+          ) : isChecking ? (
+            <LoadingState />
+          ) : extraction && classification ? (
+            <>
+              <ProductSummary title={productTitle} brand={productBrand} price={productPrice} imageUrl={productImage} classification={classification} />
+              <section className="notice">
+                <h2>Product Evidence Captured</h2>
+                <p>Backend verdict is not available yet. The raw extraction and structured classification are available in debug mode.</p>
+              </section>
+            </>
+          ) : status === "idle" ? (
+            <EmptyState onRunCheck={handleRunCheck} detectedProductLabel={detectedProductLabel} />
+          ) : null}
+
+          <section className="debug-shell">
+            <button className="debug-toggle" type="button" onClick={() => setDebugOpen((open) => !open)}>
+              <span>Debug Evidence</span>
+              <span>{debugOpen ? "Hide" : "Show"}</span>
+            </button>
+            {debugOpen ? (
+              <div className="debug-stack">
+                {analysis ? (
+                  <LegacyDebugSections
+                    analysis={analysis}
+                    monthlyWears={monthlyWears}
+                    onMonthlyWearsChange={setMonthlyWears}
+                    lifespan={lifespan}
+                  />
+                ) : null}
+                <DebugPanel
+                  extraction={extraction}
+                  classification={classification}
+                  visualEnrichment={visualEnrichment}
+                  verdict={verdict}
+                />
+              </div>
+            ) : null}
           </section>
         </>
-      ) : status === "idle" ? (
-        <EmptyState onRunCheck={handleRunCheck} />
-      ) : null}
-
-      <section className="debug-shell">
-        <button className="debug-toggle" type="button" onClick={() => setDebugOpen((open) => !open)}>
-          <span>Debug evidence</span>
-          <span>{debugOpen ? "Hide" : "Show"}</span>
-        </button>
-        {debugOpen ? (
-          <div className="debug-stack">
-            {analysis ? (
-              <LegacyDebugSections
-                analysis={analysis}
-                monthlyWears={monthlyWears}
-                onMonthlyWearsChange={setMonthlyWears}
-                lifespan={lifespan}
-              />
-            ) : null}
-            <DebugPanel
-              extraction={extraction}
-              classification={classification}
-              visualEnrichment={visualEnrichment}
-              verdict={verdict}
-            />
-          </div>
-        ) : null}
-      </section>
+      )}
     </main>
   );
 }
 
-function EmptyState({ onRunCheck }: { onRunCheck: () => void }) {
+function TopActionBar({
+  status,
+  onRefresh,
+  disabled,
+  onHowItWorks,
+  isHowPage
+}: {
+  status: Status;
+  onRefresh: () => void;
+  disabled: boolean;
+  onHowItWorks: () => void;
+  isHowPage: boolean;
+}) {
   return (
-    <section className="empty-state">
-      <p className="eyebrow">No verdict yet</p>
-      <h2>Open a clothing product page, then run the check.</h2>
-      <p>Scouted by Thriftly reads the active product page and returns a clear clothing purchase verdict.</p>
-      <button className="primary-button" type="button" onClick={onRunCheck}>
-        Run check
+    <div className="top-action-bar">
+      <span>Scouted</span>
+      <div className="top-bar-actions">
+        {!isHowPage ? (
+          <button className="secondary-nav-button" type="button" onClick={onHowItWorks}>
+            How It Works
+          </button>
+        ) : null}
+        {status !== "idle" ? (
+          <button className="refresh-button" type="button" onClick={onRefresh} disabled={disabled}>
+            {status === "extracting" ? "Reading" : status === "sending" ? "Analysing" : "Check Again"}
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function HowItWorksPage({ onBack }: { onBack: () => void }) {
+  const steps = [
+    {
+      title: "Extract Product Evidence",
+      body:
+        "The content script reads the rendered product page the shopper already has open, then pulls structured product data, Open Graph/meta tags, hydration blobs, targeted DOM snippets, visible text and image URLs. Facts are normalised into fields like title, brand, price, materials, care, construction, sizing, review claims and breadcrumbs, each with confidence rather than fake certainty.",
+      chips: ["Structured Data", "Hydration Blobs", "Field Confidence"]
+    },
+    {
+      title: "Classify The Item",
+      body:
+        "Messy retailer data is converted into controlled schema fields: category, material family, brand tier, colour, style tags, use case and source confidence. Inferred fields are labelled separately from facts stated on the page, so the system knows what it knows and what it is guessing.",
+      chips: ["Controlled Schema", "Labelled Inferences", "Source Confidence"]
+    },
+    {
+      title: "Enrich With Product Images",
+      body:
+        "Gemini-3.0-Flash reviews product images for diagnostic cues: silhouette, texture appearance, drape, seam or edge neatness, hardware, transparency, pilling, fuzz and missing close-ups. Vision is guarded: it cannot hard-claim fibre content, leather grade, exact construction, durability or authenticity from images alone.",
+      chips: ["Gemini-3.0-Flash", "Visual Cues", "Claim Guardrails"]
+    },
+    {
+      title: "Research Outside Evidence",
+      body:
+        "An evidence agent searches for exact-product reviews, third-party retailer evidence, independent reviews, Reddit or forum patterns, competitor benchmarks, category benchmarks and material context. Sources are validated for confidence, relevance and specificity; weak search-spam pages, coupons, same-retailer repeats and irrelevant comparisons are rejected or kept out of scoring.",
+      chips: ["Evidence Agent", "Source Rejection", "Repeated Themes"]
+    },
+    {
+      title: "Generate Shopper Verdict",
+      body:
+        "Gpt-5.4-Mini writes a strict structured verdict inside deterministic scoring guardrails, with Gpt-5.4 available for premium evaluation and fallback. The output becomes quality, value, durability, style, confidence, recommendation, good signs, watch-outs and a short decision summary a shopper can actually use.",
+      chips: ["Gpt-5.4-Mini", "Structured Json", "Score Guardrails"]
+    },
+    {
+      title: "Retrieve Better Alternatives",
+      body:
+        "The recommendations layer uses a Text-Embedding-3-Small product intelligence blob for similarity retrieval, then ranks items by matching category, use case, style, material, price band, stronger scores and enough confidence. Approved examples act as cold-start anchors, while analysed products compound into a more useful recommendation base.",
+      chips: ["Text Embedding", "Similarity Retrieval", "Approved Examples"]
+    }
+  ];
+
+  const technicalNotes = [
+    "Rendered-page extraction avoids brittle backend scraping and blocked headless requests.",
+    "Controlled schemas reduce model drift across messy retailer pages.",
+    "Confidence labels and evidence gaps stop the system overclaiming.",
+    "External evidence is validated before it can affect scores.",
+    "Embeddings make recommendations improve as analysed products accumulate."
+  ];
+
+  return (
+    <section className="how-page">
+      <button className="back-button" type="button" onClick={onBack}>
+        <span className="chevron chevron--back" aria-hidden="true" />
+        <span>Back</span>
       </button>
+
+      <div className="how-intro">
+        <p className="eyebrow">Backend Pipeline</p>
+        <h2>How Scouted Turns A Product Page Into A Buying Verdict</h2>
+        <p>
+          The extension separates extraction, classification, visual evidence, outside research, scoring and recommendations so the final call is useful without hiding the evidence.
+        </p>
+      </div>
+
+      <div className="pipeline-list">
+        {steps.map((step, index) => (
+          <article className="pipeline-step" key={step.title}>
+            <div className="pipeline-number">{String(index + 1).padStart(2, "0")}</div>
+            <div className="pipeline-copy">
+              <h3>{step.title}</h3>
+              <p>{step.body}</p>
+              <div className="model-chip-row" aria-label={`${step.title} technical details`}>
+                {step.chips.map((chip) => (
+                  <span key={chip}>{chip}</span>
+                ))}
+              </div>
+            </div>
+          </article>
+        ))}
+      </div>
+
+      <section className="panel-section technical-note-list">
+        <SectionHeader title="What This Shows Technically" />
+        <div>
+          {technicalNotes.map((note) => (
+            <p key={note}>{note}</p>
+          ))}
+        </div>
+      </section>
+    </section>
+  );
+}
+
+function EmptyState({ onRunCheck, detectedProductLabel }: { onRunCheck: () => void; detectedProductLabel: string | null }) {
+  const previewItems = [
+    "Score And Recommendation",
+    "Good Signs",
+    "Watch-outs",
+    "Evidence Notes"
+  ];
+
+  return (
+    <section className="precheck-card">
+      <div className="precheck-copy">
+        <p className="eyebrow">Ready To Scout</p>
+        <h2>Quality Read For This Item</h2>
+        <p>Checks the active product page for material, value, durability and evidence signals.</p>
+      </div>
+      <div className="precheck-action">
+        {detectedProductLabel ? <p className="ready-line">{detectedProductLabel}</p> : null}
+        <button className="primary-button" type="button" onClick={onRunCheck}>
+          Analyse This Item
+        </button>
+      </div>
+      <div className="preview-section">
+        <SectionHeader title="What You’ll See" />
+        <div className="preview-list">
+          {previewItems.map((item, index) => (
+            <div className="preview-row" key={item}>
+              <span aria-hidden="true">{index + 1}</span>
+              <strong>{item}</strong>
+            </div>
+          ))}
+        </div>
+      </div>
+      <p className="precheck-note">Works best when the product page includes material, price and care details.</p>
+    </section>
+  );
+}
+
+function LoadingState() {
+  const progressItems = [
+    "Reading Product Page",
+    "Checking Material Signals",
+    "Assessing Value",
+    "Building Verdict"
+  ];
+
+  return (
+    <>
+      <section className="analysis-card">
+        <div className="analysis-heading">
+          <p className="eyebrow">Analysis In Progress</p>
+          <h2>Building The Verdict</h2>
+        </div>
+        <div className="progress-list">
+          {progressItems.map((item, index) => (
+            <div className="progress-row" key={item}>
+              <span className={index === 0 ? "progress-dot progress-dot--active" : "progress-dot"} aria-hidden="true" />
+              <strong>{item}</strong>
+            </div>
+          ))}
+        </div>
+      </section>
+      <LoadingSkeleton />
+    </>
+  );
+}
+
+function LoadingSkeleton() {
+  return (
+    <section className="loading-skeleton" aria-label="Analysis preview loading">
+      <div className="skeleton-hero">
+        <div className="skeleton-block skeleton-image" />
+        <div className="skeleton-stack">
+          <div className="skeleton-line skeleton-line--wide" />
+          <div className="skeleton-line skeleton-line--medium" />
+          <div className="skeleton-grade-row">
+            <div className="skeleton-block skeleton-score" />
+            <div className="skeleton-stack">
+              <div className="skeleton-line skeleton-line--score" />
+              <div className="skeleton-pill" />
+            </div>
+          </div>
+        </div>
+      </div>
+      <div className="skeleton-card">
+        <div className="skeleton-line skeleton-line--short" />
+        <div className="skeleton-row" />
+        <div className="skeleton-row" />
+      </div>
+      <div className="skeleton-card">
+        <div className="skeleton-line skeleton-line--short" />
+        <div className="skeleton-row" />
+        <div className="skeleton-row skeleton-row--narrow" />
+      </div>
     </section>
   );
 }
@@ -150,19 +383,13 @@ function ProductHero({
   brand,
   price,
   imageUrl,
-  verdict,
-  status,
-  onRefresh,
-  disabled
+  verdict
 }: {
   title: string;
   brand: string;
   price: string | null;
   imageUrl: string | null;
   verdict: Stage6Verdict;
-  status: Status;
-  onRefresh: () => void;
-  disabled: boolean;
 }) {
   const score = scoreOutOf100(verdict.overall_rating);
   const tone = scoreTone(score);
@@ -174,10 +401,7 @@ function ProductHero({
       </div>
       <div className="scouted-product-copy">
         <div className="brand-line">
-          <p>{brand}</p>
-          <button className="refresh-button" type="button" onClick={onRefresh} disabled={disabled}>
-            {status === "extracting" ? "Reading" : status === "sending" ? "Analysing" : "Refresh"}
-          </button>
+          <p>{toTitleCase(brand)}</p>
         </div>
         <div className="item-line">
           <h2>{title}</h2>
@@ -187,7 +411,7 @@ function ProductHero({
           <div className={`grade-tile grade-tile--${tone}`}>{gradeFor(verdict.overall_rating)}</div>
           <div className="grade-meta">
             <strong className={`score-text score-text--${tone}`}>{score}/100</strong>
-            <span className={`recommendation-tag recommendation-tag--${verdict.recommendation}`}>{formatLabel(verdict.recommendation)}</span>
+            <span className={`recommendation-tag recommendation-tag--${verdict.recommendation}`}>{toTitleCase(formatLabel(verdict.recommendation))}</span>
           </div>
         </div>
       </div>
@@ -198,26 +422,17 @@ function ProductHero({
 function DescriptionSection({ verdict }: { verdict: Stage6Verdict }) {
   return (
     <section className="description-section">
-      <h2>{verdict.recommendation_summary}</h2>
-      <p>{verdict.summary}</p>
+      <h2>{conciseSentence(verdict.recommendation_summary || verdict.summary)}</h2>
     </section>
   );
 }
 
-type SignItem = {
-  label: string;
-  detail: string;
-  related_metric: "quality" | "value" | "durability" | "style";
-  strength?: "low" | "medium" | "high";
-  severity?: "low" | "medium" | "high";
-};
-
-function SignsSection({ title, tone, items }: { title: string; tone: "positive" | "negative"; items: SignItem[] }) {
+function SignsSection({ title, tone, items }: { title: string; tone: "positive" | "negative"; items: ShopperSignal[] }) {
   return (
     <section className="panel-section sign-section">
       <SectionHeader title={title} />
       <div className="sign-list">
-        {items.map((item) => {
+        {items.length ? items.map((item) => {
           const level = item.strength ?? item.severity ?? "medium";
           return (
             <div className="sign-row" key={`${title}-${item.label}`}>
@@ -226,12 +441,12 @@ function SignsSection({ title, tone, items }: { title: string; tone: "positive" 
               </div>
               <div>
                 <strong>{item.label}</strong>
-                <p>{item.detail}</p>
+                <p>{conciseSentence(item.detail)}</p>
               </div>
               <span className={`signal-dot signal-dot--${tone}-${level}`} aria-label={`${level} ${tone} signal`} />
             </div>
           );
-        })}
+        }) : <p className="muted sign-empty">No evidence-grounded signals generated.</p>}
       </div>
     </section>
   );
@@ -262,9 +477,9 @@ function ProductSummary({
         </p>
         <h2>{title}</h2>
         <div className="tag-row">
-          <span>{formatLabel(classification.category)}</span>
-          <span>{formatLabel(classification.material_family)}</span>
-          <span>{formatLabel(classification.brand_tier)}</span>
+          <span>{toTitleCase(formatLabel(classification.category))}</span>
+          <span>{toTitleCase(formatLabel(classification.material_family))}</span>
+          <span>{toTitleCase(formatLabel(classification.brand_tier))}</span>
         </div>
       </div>
     </section>
@@ -277,7 +492,7 @@ function RecommendationPanel({ verdict }: { verdict: Stage6Verdict }) {
       <div className="rating-mark">{gradeFor(verdict.overall_rating)}</div>
       <div>
         <p className="recommendation-label">
-          {formatLabel(verdict.recommendation)} · {verdict.overall_rating.toFixed(1)}/10 · {verdict.confidence_label} confidence
+          {toTitleCase(formatLabel(verdict.recommendation))} · {verdict.overall_rating.toFixed(1)}/10 · {toTitleCase(verdict.confidence_label)} Confidence
         </p>
         <h2>{verdict.recommendation_summary}</h2>
         <p>{verdict.summary}</p>
@@ -289,7 +504,7 @@ function RecommendationPanel({ verdict }: { verdict: Stage6Verdict }) {
 function MainVerdict({ verdict }: { verdict: Stage6Verdict }) {
   return (
     <section className="panel-section verdict-section">
-      <SectionHeader title="Verdict" meta={`${Math.round(verdict.scores.confidence * 100)}% confidence`} />
+      <SectionHeader title="Verdict" meta={`${Math.round(verdict.scores.confidence * 100)}% Confidence`} />
       <p>{verdict.summary || verdict.recommendation_summary}</p>
     </section>
   );
@@ -298,7 +513,7 @@ function MainVerdict({ verdict }: { verdict: Stage6Verdict }) {
 function ScoreSection({ verdict }: { verdict: Stage6Verdict }) {
   return (
     <section className="panel-section">
-      <SectionHeader title="Scores" meta="tap a row to expand" />
+      <SectionHeader title="Scores" meta="Tap A Row To Expand" />
       <div className="score-list">
         <ScoreRow title="Quality" score={verdict.scores.quality} verdict={verdict.verdicts.quality} />
         <ScoreRow title="Value" score={verdict.scores.value} verdict={verdict.verdicts.value} />
@@ -322,8 +537,8 @@ function ScoreRow({ title, score, verdict }: { title: string; score: number; ver
         <Meter value={score} max={10} />
         <p>{verdict.verdict}</p>
         <div className="tag-row">
-          <span>{verdict.confidence} confidence</span>
-          <span>{formatLabel(verdict.evidence_type)}</span>
+          <span>{toTitleCase(verdict.confidence)} Confidence</span>
+          <span>{toTitleCase(formatLabel(verdict.evidence_type))}</span>
         </div>
       </div>
     </details>
@@ -333,10 +548,10 @@ function ScoreRow({ title, score, verdict }: { title: string; score: number; ver
 function MaterialSection({ classification }: { classification: ProductClassification }) {
   return (
     <section className="panel-section">
-      <SectionHeader title="Material notes" meta={classification.source_confidence_label} />
+      <SectionHeader title="Material Notes" meta={toTitleCase(classification.source_confidence_label)} />
       <Field label="Composition" value={classification.material_description} />
       <Field label="Construction" value={classification.construction_description} />
-      <Field label="Use case" value={classification.use_case} />
+      <Field label="Use Case" value={classification.use_case} />
     </section>
   );
 }
@@ -375,7 +590,7 @@ function EvidenceSection({ analysis }: { analysis: BackendAnalysis }) {
 
   return (
     <section className="panel-section">
-      <SectionHeader title="Evidence and confidence" meta={analysis.verdict.confidence_label} />
+      <SectionHeader title="Evidence And Confidence" meta={toTitleCase(analysis.verdict.confidence_label)} />
       <div className="metric-grid">
         {evidenceItems.map((item) => (
           <div className="metric" key={item}>
@@ -383,14 +598,14 @@ function EvidenceSection({ analysis }: { analysis: BackendAnalysis }) {
           </div>
         ))}
       </div>
-      <SignalList title="Page facts" items={analysis.page_evidence.map((item) => item.claim)} emptyLabel="No first-party page facts captured" />
-      <SignalList title="Outside evidence" items={formatExternalInsightItems(analysis)} emptyLabel="No useful external insights found" />
-      <SignalList title="Repeated themes" items={analysis.repeated_themes.map((item) => `${formatLabel(item.theme)}: ${item.summary}`)} emptyLabel="No repeated external themes found" />
-      <SignalList title="Conflicting evidence" items={analysis.conflicting_evidence} emptyLabel="No conflicts found" />
-      <SignalList title="Evidence gaps" items={analysis.evidence_gaps} emptyLabel="No evidence gaps flagged" />
-      <SignalList title="Rejected sources" items={analysis.rejected_sources.map((item) => `${item.source_domain || "unknown"}: ${item.reason_rejected}`)} emptyLabel="No rejected sources returned" />
-      <SignalList title="Reasoning flags" items={analysis.verdict.reasoning_flags.map(formatLabel)} emptyLabel="None" />
-      <SignalList title="Missing image views" items={analysis.visual_enrichment.missing_views} emptyLabel="None flagged" />
+      <SignalList title="Page Facts" items={analysis.page_evidence.map((item) => item.claim)} emptyLabel="No First-Party Page Facts Captured" />
+      <SignalList title="Outside Evidence" items={formatExternalInsightItems(analysis)} emptyLabel="No Useful External Insights Found" />
+      <SignalList title="Repeated Themes" items={analysis.repeated_themes.map((item) => `${toTitleCase(formatLabel(item.theme))}: ${item.summary}`)} emptyLabel="No Repeated External Themes Found" />
+      <SignalList title="Conflicting Evidence" items={analysis.conflicting_evidence} emptyLabel="No Conflicts Found" />
+      <SignalList title="Evidence Gaps" items={analysis.evidence_gaps} emptyLabel="No Evidence Gaps Flagged" />
+      <SignalList title="Rejected Sources" items={analysis.rejected_sources.map((item) => `${item.source_domain || "unknown"}: ${item.reason_rejected}`)} emptyLabel="No Rejected Sources Returned" />
+      <SignalList title="Reasoning Flags" items={analysis.verdict.reasoning_flags.map((item) => toTitleCase(formatLabel(item)))} emptyLabel="None" />
+      <SignalList title="Missing Image Views" items={analysis.visual_enrichment.missing_views} emptyLabel="None Flagged" />
     </section>
   );
 }
@@ -421,13 +636,13 @@ function LifespanSection({
 }) {
   return (
     <section className="panel-section">
-      <SectionHeader title="Estimated lifespan" meta="rough estimate" />
+      <SectionHeader title="Estimated Lifespan" meta="Rough Estimate" />
       <div className="lifespan-result">
         <strong>{lifespan.label}</strong>
-        <span>{lifespan.confidence} confidence</span>
+        <span>{toTitleCase(lifespan.confidence)} Confidence</span>
       </div>
       <label className="slider-label" htmlFor="monthly-wears">
-        <span>Monthly wears</span>
+        <span>Monthly Wears</span>
         <strong>{monthlyWears}</strong>
       </label>
       <input
@@ -447,18 +662,8 @@ function LifespanSection({
   );
 }
 
-function AlternativesSection({ approvedExamples }: { approvedExamples: MatchedApprovedExample[] }) {
-  const alternatives = placeholderAlternatives.map((alternative, index) => {
-    const approvedExample = approvedExamples[index];
-    return approvedExample
-      ? {
-          ...alternative,
-          rating: scoreOutOf100(approvedExample.expected_scores.value),
-          itemName: `${formatLabel(approvedExample.material_family)} ${formatLabel(approvedExample.category)}`,
-          price: approvedExample.price_band
-        }
-      : alternative;
-  });
+function AlternativesSection({ approvedExamples, onViewAll }: { approvedExamples: MatchedApprovedExample[]; onViewAll: () => void }) {
+  const alternatives = buildAlternatives(approvedExamples);
 
   return (
     <section className="panel-section alternatives-section">
@@ -467,19 +672,56 @@ function AlternativesSection({ approvedExamples }: { approvedExamples: MatchedAp
         {alternatives.slice(0, 2).map((alternative) => (
           <AlternativeRow key={alternative.url} alternative={alternative} />
         ))}
+        {alternatives.length > 2 ? <ViewAllAlternativesRow count={alternatives.length} onViewAll={onViewAll} /> : null}
       </div>
-      {alternatives.length > 2 ? (
-        <details className="view-more">
-          <summary>View more</summary>
-          <div className="alternative-list">
-            {alternatives.slice(2).map((alternative) => (
-              <AlternativeRow key={alternative.url} alternative={alternative} />
-            ))}
-          </div>
-        </details>
-      ) : null}
     </section>
   );
+}
+
+function AlternativesPage({ approvedExamples, onBack }: { approvedExamples: MatchedApprovedExample[]; onBack: () => void }) {
+  const alternatives = buildAlternatives(approvedExamples);
+
+  return (
+    <section className="alternatives-page">
+      <button className="back-button" type="button" onClick={onBack}>
+        <span className="chevron chevron--back" aria-hidden="true" />
+        <span>Alternatives</span>
+      </button>
+      <div className="alternative-list alternative-list--full">
+        {alternatives.map((alternative) => (
+          <AlternativeRow key={alternative.url} alternative={alternative} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function ViewAllAlternativesRow({ count, onViewAll }: { count: number; onViewAll: () => void }) {
+  return (
+    <button className="view-all-row" type="button" onClick={onViewAll}>
+      <span>View All Alternatives</span>
+      <span>{count} Options</span>
+      <span className="chevron" aria-hidden="true" />
+    </button>
+  );
+}
+
+function buildAlternatives(approvedExamples: MatchedApprovedExample[]): AlternativeItem[] {
+  return placeholderAlternatives.map((alternative, index) => {
+    const approvedExample = approvedExamples[index];
+    return approvedExample
+      ? {
+          ...alternative,
+          rating: scoreOutOf100(approvedExample.expected_scores.value),
+          itemName: toTitleCase(`${formatLabel(approvedExample.material_family)} ${formatLabel(approvedExample.category)}`),
+          price: approvedExample.price_band
+        }
+      : {
+          ...alternative,
+          brand: toTitleCase(alternative.brand),
+          itemName: toTitleCase(alternative.itemName)
+        };
+  });
 }
 
 function AlternativeRow({ alternative }: { alternative: AlternativeItem }) {
@@ -491,8 +733,8 @@ function AlternativeRow({ alternative }: { alternative: AlternativeItem }) {
         {alternative.thumbnail ? <img src={alternative.thumbnail} alt="" /> : <span />}
       </div>
       <div className="alternative-copy">
-        <span>{alternative.brand}</span>
-        <strong>{alternative.itemName}</strong>
+        <span>{toTitleCase(alternative.brand)}</span>
+        <strong>{toTitleCase(alternative.itemName)}</strong>
       </div>
       <div className="alternative-score">
         <span>{alternative.price}</span>
@@ -513,7 +755,7 @@ function HowScoresSection({ verdict }: { verdict: Stage6Verdict }) {
 
   return (
     <section className="panel-section score-explainer">
-      <SectionHeader title="How scores are calculated" />
+      <SectionHeader title="How Scores Are Calculated" />
       <div className="score-card-list">
         {rows.map((row) => {
           const score = scoreOutOf100(row.score);
@@ -549,11 +791,11 @@ function LegacyDebugSections({
 }) {
   return (
     <div className="legacy-debug">
-      <p className="debug-label">Previous components</p>
+      <p className="debug-label">Previous Components</p>
       <MainVerdict verdict={analysis.verdict} />
       <ScoreSection verdict={analysis.verdict} />
       <MaterialSection classification={analysis.classification} />
-      <SignalSection title="Quality signals" items={analysis.classification.quality_signals} emptyLabel="No positive quality signals found." />
+      <SignalSection title="Quality Signals" items={analysis.classification.quality_signals} emptyLabel="No Positive Quality Signals Found." />
       <SignalSection title="Watch-outs" items={watchOutsFor(analysis)} emptyLabel="No material watch-outs found." />
       <EvidenceSection analysis={analysis} />
       {lifespan ? (
@@ -575,36 +817,6 @@ type AlternativeItem = {
   url: string;
   thumbnail: string | null;
 };
-
-const placeholderGoodSigns: SignItem[] = [
-  {
-    label: "100% cotton",
-    detail: "Natural single-fibre material, generally a good sign for comfort and breathability.",
-    related_metric: "quality",
-    strength: "high"
-  },
-  {
-    label: "Fair price",
-    detail: "The listed price looks reasonable for a cotton Oxford shirt from a high-street retailer.",
-    related_metric: "value",
-    strength: "medium"
-  }
-];
-
-const placeholderWatchOuts: SignItem[] = [
-  {
-    label: "Limited construction detail",
-    detail: "No clear evidence on fabric weight, stitching, seams, buttons, or collar structure.",
-    related_metric: "durability",
-    severity: "medium"
-  },
-  {
-    label: "Not premium evidence",
-    detail: "The page supports a solid basic shirt, but not a premium-quality verdict.",
-    related_metric: "quality",
-    severity: "low"
-  }
-];
 
 const placeholderAlternatives: AlternativeItem[] = [
   {
@@ -641,14 +853,14 @@ const placeholderAlternatives: AlternativeItem[] = [
   }
 ];
 
-function metricInitial(metric: SignItem["related_metric"]): string {
-  const initials: Record<SignItem["related_metric"], string> = {
-    quality: "Q",
-    value: "V",
-    durability: "D",
-    style: "S"
+function metricInitial(metric: ShopperSignal["related_metric"]): string {
+  const marks: Record<ShopperSignal["related_metric"], string> = {
+    quality: "+",
+    value: "$",
+    durability: "~",
+    style: "*"
   };
-  return initials[metric];
+  return marks[metric];
 }
 
 function scoreOutOf100(score: number): number {
@@ -696,6 +908,8 @@ function DebugPanel({
     ].filter((domain, index, domains) => domain && domains.indexOf(domain) === index),
     public_evidence: verdict?.analysis?.public_evidence ?? [],
     evidence_score_effects: verdict?.analysis?.verdict.evidence_score_effects ?? [],
+    good_signs: verdict?.analysis?.verdict.good_signs ?? [],
+    watch_outs: verdict?.analysis?.verdict.watch_outs ?? [],
     extraction,
     classification,
     visual_enrichment: visualEnrichment,
@@ -805,6 +1019,11 @@ function getDomain(url: string | undefined): string {
   }
 }
 
+function buildDetectedProductLabel(brand: string | null, productName: string | null): string | null {
+  const parts = [brand, productName].filter((part): part is string => Boolean(part?.trim()));
+  return parts.length ? parts.join(" ") : null;
+}
+
 function gradeFor(score: number): string {
   if (score >= 8.5) return "A";
   if (score >= 7.5) return "A-";
@@ -824,13 +1043,17 @@ function formatLabel(value: string): string {
   return value.replace(/_/g, " ");
 }
 
-function truncate(value: string, maxLength: number): string {
-  return value.length > maxLength ? `${value.slice(0, maxLength - 1)}...` : value;
+function toTitleCase(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/\b[a-z]/g, (letter) => letter.toUpperCase());
 }
 
-function isLocalDebugEnvironment(): boolean {
-  if (import.meta.env.DEV) return true;
-  if (typeof chrome === "undefined" || !chrome.runtime?.getManifest) return true;
-  const manifest = chrome.runtime.getManifest();
-  return !("update_url" in manifest);
+function conciseSentence(value: string): string {
+  const sentence = value.split(/(?<=[.!?])\s+/)[0]?.trim() || value.trim();
+  return sentence.length > 118 ? truncate(sentence, 118) : sentence;
+}
+
+function truncate(value: string, maxLength: number): string {
+  return value.length > maxLength ? `${value.slice(0, maxLength - 1)}...` : value;
 }
