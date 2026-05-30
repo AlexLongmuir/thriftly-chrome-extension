@@ -411,6 +411,7 @@ function createHeuristicVerdict(context: Stage6Context, status: Stage6Verdict["m
     confidence_label: confidenceLabel,
     good_signs: [],
     watch_outs: [],
+    unverified: [],
     verdicts: {
       quality: qualityVerdict(context, scores, confidenceLabel),
       value: valueVerdict(classification, context.matchedExamples, scores),
@@ -457,6 +458,7 @@ function sanitiseStage6Verdict(
     confidence_label: confidenceLabel,
     good_signs: [],
     watch_outs: [],
+    unverified: [],
     verdicts: {
       quality: cleanDimensionVerdict(candidate.verdicts?.quality, fallback.verdicts.quality, confidenceLabel),
       value: cleanDimensionVerdict(candidate.verdicts?.value, fallback.verdicts.value, confidenceLabel),
@@ -477,10 +479,17 @@ function sanitiseStage6Verdict(
 function addShopperSignals(verdict: Stage6Verdict, context: Stage6Context, candidate?: Partial<Stage6Verdict>): Stage6Verdict {
   const fallbackGoodSigns = buildGoodSigns(verdict, context);
   const fallbackWatchOuts = buildWatchOuts(verdict, context);
+  const fallbackUnverified = buildUnverifiedSignals(verdict, context);
+  const modelWatchOuts = validateModelShopperSignals(candidate?.watch_outs, "negative", context);
+  const modelWatchOutsThatAreUnverified = modelWatchOuts.filter(isUnverifiedShopperSignal);
   return {
     ...verdict,
-    good_signs: completeShopperSignals(validateModelShopperSignals(candidate?.good_signs, "positive", context), fallbackGoodSigns),
-    watch_outs: completeShopperSignals(validateModelShopperSignals(candidate?.watch_outs, "negative", context), fallbackWatchOuts)
+    good_signs: mergeUsefulShopperSignals(validateModelShopperSignals(candidate?.good_signs, "positive", context), fallbackGoodSigns),
+    watch_outs: mergeUsefulShopperSignals(modelWatchOuts.filter((item) => !isUnverifiedShopperSignal(item)), fallbackWatchOuts),
+    unverified: mergeUsefulShopperSignals(
+      [...validateModelShopperSignals(candidate?.unverified, "neutral", context), ...modelWatchOutsThatAreUnverified],
+      fallbackUnverified
+    )
   };
 }
 
@@ -507,19 +516,20 @@ const SHOPPER_SIGNAL_CATEGORIES: ShopperSignalCategory[] = [
   "style",
   "care"
 ];
+const SHOPPER_SIGNAL_LIMIT = 4;
 
 const INTERNAL_SIGNAL_LANGUAGE =
   /\b(?:product fit evidence|product durability evidence|category anchors?|score cannot be pushed|retrieved evidence|based on scraped data|scraped data|backend|model|prompt|schema|stage\s*\d|guardrails?|metric|source data|external source|internal|system|deterministic|heuristic|confidence cap)\b/i;
 const GENERIC_SIGNAL_TITLE =
   /^(?:quality point|good sign|watch[- ]?out|nice detail|something to note|important point|product evidence|quality evidence|material evidence|durability evidence)$/i;
 
-function validateModelShopperSignals(value: unknown, tone: "positive" | "negative", context: Stage6Context): ShopperSignal[] {
+function validateModelShopperSignals(value: unknown, tone: "positive" | "negative" | "neutral", context: Stage6Context): ShopperSignal[] {
   if (!Array.isArray(value)) return [];
   const evidenceText = shopperSignalEvidenceText(context);
   const accepted: ShopperSignal[] = [];
 
   for (const item of value) {
-    if (accepted.length >= 3 || !item || typeof item !== "object") continue;
+    if (accepted.length >= SHOPPER_SIGNAL_LIMIT || !item || typeof item !== "object") continue;
     const record = item as Record<string, unknown>;
     const title = cleanText(record.title, "", 64);
     const description = twoSentenceText(record.description, "", 320);
@@ -544,14 +554,14 @@ function validateModelShopperSignals(value: unknown, tone: "positive" | "negativ
   return accepted;
 }
 
-function completeShopperSignals(modelSignals: ShopperSignal[], fallbackSignals: ShopperSignal[]): ShopperSignal[] {
+function mergeUsefulShopperSignals(modelSignals: ShopperSignal[], fallbackSignals: ShopperSignal[]): ShopperSignal[] {
   const result = [...modelSignals];
   for (const fallback of fallbackSignals) {
-    if (result.length >= 3) break;
+    if (result.length >= SHOPPER_SIGNAL_LIMIT) break;
     if (result.some((existing) => duplicateSignal(existing, fallback))) continue;
     result.push(fallback);
   }
-  return result.slice(0, 3);
+  return result.slice(0, SHOPPER_SIGNAL_LIMIT);
 }
 
 function isValidModelShopperSignal(signal: ShopperSignal, evidenceText: string): boolean {
@@ -578,6 +588,12 @@ function hasSignalEvidenceSupport(signal: ShopperSignal, evidenceText: string): 
     .filter((word) => word.length >= 4 && !SIGNAL_SUPPORT_STOP_WORDS.has(word));
   if (words.some((word) => evidenceText.includes(word))) return true;
   return Boolean(signal.category && words.length >= 3);
+}
+
+function isUnverifiedShopperSignal(signal: ShopperSignal): boolean {
+  const text = `${signal.label} ${signal.detail}`.toLowerCase();
+  if (/\b(?:concerns?|risky|weak|poor|bad|limited breathability|may shrink|inconsistent|expensive|overpriced|questionable|mixed owner|complain|reported)\b/.test(text)) return false;
+  return /\b(?:unclear|limited|missing|not stated|not shown|not enough|hard to judge|unknown|unverified|cannot verify|couldn'?t verify|no close-up|without close-up|thin evidence)\b/.test(text);
 }
 
 const SIGNAL_SUPPORT_STOP_WORDS = new Set([
@@ -647,7 +663,7 @@ function normaliseShopperSignalCategory(value: unknown): ShopperSignalCategory |
   return null;
 }
 
-function inferSignalCategory(text: string, tone: "positive" | "negative"): ShopperSignalCategory {
+function inferSignalCategory(text: string, tone: "positive" | "negative" | "neutral"): ShopperSignalCategory {
   if (/\b(?:cotton|wool|merino|linen|leather|silk|viscose|polyester|nylon|fabric|fibre|fiber|drape|breathab|opacity|soft|handle)\b/i.test(text)) return "material";
   if (/\b(?:price|priced|value|cost|£|\$|€|discount|expensive|cheap)\b/i.test(text)) return "value";
   if (/\b(?:review|owner|feedback|forum|reddit|reported|praised|complain)\b/i.test(text)) return "evidence";
@@ -733,42 +749,19 @@ function buildGoodSigns(verdict: Stage6Verdict, context: Stage6Context): Shopper
     }));
   }
 
-  if (signals.length < 3 && verdict.scores.quality >= 6.2) {
-    signals.push(signal({
-      label: "Solid quality baseline",
-      detail: twoSentenceText(verdict.verdicts.quality.verdict, "The material and category read look better than a thinly described basic, though the support is not complete."),
-      related_metric: "quality",
-      strength: verdict.scores.quality >= 7 ? "high" : "medium",
-      confidence: verdict.confidence_label,
-      evidence_basis: [basis("category_explanation", "quality verdict", verdict.verdicts.quality.verdict)]
-    }));
-  }
-
-  if (signals.length < 3 && verdict.scores.durability >= 6) {
-    signals.push(signal({
-      label: "Good long-term wear",
-      detail: twoSentenceText(verdict.verdicts.durability.verdict, "Nothing obvious drags durability down hard, though the support is still incomplete."),
-      related_metric: "durability",
-      strength: "medium",
-      confidence: verdict.confidence_label,
-      evidence_basis: [basis("category_explanation", "durability verdict", verdict.verdicts.durability.verdict)]
-    }));
-  }
-
-  return dedupeShopperSignals(signals).slice(0, 3);
+  return dedupeShopperSignals(signals).slice(0, SHOPPER_SIGNAL_LIMIT);
 }
 
 function buildWatchOuts(verdict: Stage6Verdict, context: Stage6Context): ShopperSignal[] {
   const product = context.payload.page.product;
   const classification = context.payload.classification;
   const signals: ShopperSignal[] = [];
-  const evidenceGaps = context.evidencePack.evidenceGaps;
   const negativeExternal = [...context.evidencePack.externalEvidence, ...context.evidencePack.benchmarkEvidence]
     .filter((item) => item.sentiment === "negative" || item.sentiment === "mixed")
     .sort((left, right) => right.confidence * right.relevance_score - left.confidence * left.relevance_score);
 
   for (const item of negativeExternal) {
-    if (signals.length >= 2) break;
+    if (signals.length >= 3) break;
     const externalSignal = shopperExternalSignal(item, "negative");
     signals.push(signal({
       label: externalSignal.label,
@@ -780,66 +773,31 @@ function buildWatchOuts(verdict: Stage6Verdict, context: Stage6Context): Shopper
     }));
   }
 
-  if (!product.fields.construction.value || evidenceGaps.some((item) => /construction/i.test(item))) {
-    const constructionSignal = shopperConstructionGap(classification.category);
+  if (classification.material_family === "synthetic" && product.fields.materials.value) {
     signals.push(signal({
-      label: constructionSignal.label,
-      detail: constructionSignal.detail,
-      related_metric: "durability",
-      severity: verdict.scores.durability < 5.8 ? "high" : "medium",
-      confidence: "high",
-      evidence_basis: [
-        basis("missing_evidence", "product facts", "Retailer page did not provide construction details."),
-        basis("missing_evidence", "evidence gaps", evidenceGaps.find((item) => /construction/i.test(item)) || constructionExpectation(classification.category))
-      ]
-    }));
-  }
-
-  if (!product.fields.care.value) {
-    signals.push(signal({
-      label: "Care details unclear",
-      detail: "The page does not show enough care guidance, so wash behaviour, shrinkage, and upkeep risk remain uncertain.",
-      related_metric: "durability",
-      severity: "medium",
-      confidence: "high",
-      evidence_basis: [basis("missing_evidence", "product facts", "Care label not found in captured product facts.")]
-    }));
-  }
-
-  if (!product.fields.sizing.value || evidenceGaps.some((item) => /fit|sizing|shrinkage|washing/i.test(item))) {
-    const fitGap = evidenceGaps.find((item) => /shrinkage|washing/i.test(item))
-      ? {
-          label: "May shrink after washing",
-          detail: "Fit after washing is not well supported by the available details. Treat shrinkage as a caution rather than a deal-breaker unless more owner feedback confirms it."
-        }
-      : {
-          label: "Fit may be inconsistent",
-          detail: "The page does not give enough sizing or fit-after-wear detail, so the buy recommendation is less secure for fit-sensitive shoppers."
-        };
-    signals.push(signal({
-      label: fitGap.label,
-      detail: fitGap.detail,
-      related_metric: "value",
+      label: "Breathability limited",
+      detail: "Synthetic-heavy fabrics can be easy to care for, but they often feel less airy than cotton, linen, or wool in warmer weather.",
+      related_metric: "quality",
+      category: "material",
       severity: "medium",
       confidence: "medium",
-      evidence_basis: [basis("missing_evidence", "evidence gaps", evidenceGaps.find((item) => /fit|sizing|shrinkage|washing/i.test(item)) || "Sizing or fit-after-washing evidence not found.")]
+      evidence_basis: [basis("category_explanation", "material context", materialQualityInsight(classification))]
     }));
   }
 
-  if (context.evidencePack.externalCoverage === "none" || context.evidencePack.externalCoverage === "limited") {
+  if (syntheticPriceLooksHigh(classification)) {
     signals.push(signal({
-      label: "Quality evidence is thin",
-      detail: context.evidencePack.externalCoverage === "none"
-        ? "There is no accepted independent product feedback, so the verdict leans heavily on retailer facts. Treat it as a cautious read, not a settled call."
-        : "Independent feedback is limited, so the verdict has to stay cautious even where the product facts look plausible.",
-      related_metric: "quality",
-      severity: context.evidencePack.externalCoverage === "none" ? "medium" : "low",
-      confidence: "high",
-      evidence_basis: [basis("missing_evidence", "external coverage", `External evidence coverage: ${context.evidencePack.externalCoverage}.`)]
+      label: "Price looks high",
+      detail: `At ${classification.price}, the price asks a lot for a synthetic ${classification.category} unless the cut, finish, or performance details are unusually strong.`,
+      related_metric: "value",
+      category: "value",
+      severity: "medium",
+      confidence: "medium",
+      evidence_basis: [basis("category_explanation", "value context", `Synthetic ${classification.category} listed at ${classification.price}.`)]
     }));
   }
 
-  if (verdict.scores.value < 5.8) {
+  if (classification.price && verdict.scores.value < 5.8) {
     signals.push(signal({
       label: "Value is questionable",
       detail: twoSentenceText(verdict.verdicts.value.verdict, "The price asks more than the available quality detail comfortably supports."),
@@ -850,29 +808,130 @@ function buildWatchOuts(verdict: Stage6Verdict, context: Stage6Context): Shopper
     }));
   }
 
+  return dedupeShopperSignals(signals).slice(0, SHOPPER_SIGNAL_LIMIT);
+}
+
+function buildUnverifiedSignals(verdict: Stage6Verdict, context: Stage6Context): ShopperSignal[] {
+  const product = context.payload.page.product;
+  const classification = context.payload.classification;
+  const signals: ShopperSignal[] = [];
+  const evidenceGaps = context.evidencePack.evidenceGaps;
+  const missingViews = [...context.visual.missing_views, ...context.visual.image_quality_limits];
+
   if (classification.material_family === "unknown" || !product.fields.materials.value) {
     signals.push(signal({
       label: "Fabric quality unclear",
       detail: "The listing does not give a reliable fibre composition, so fabric quality, handle, breathability, and likely wear are hard to judge.",
       related_metric: "quality",
-      severity: "high",
+      category: "material",
       confidence: "high",
       evidence_basis: [basis("missing_evidence", "product facts", "Material composition was not found in captured product facts.")]
     }));
+  } else if (!mentionsFabricWeightOrOpacity(product, classification, evidenceGaps)) {
+    signals.push(signal({
+      label: "Fabric weight unknown",
+      detail: "The material composition is useful, but fabric weight, density, or opacity detail is not shown, so drape and thinness are harder to judge.",
+      related_metric: "quality",
+      category: "material",
+      confidence: "medium",
+      evidence_basis: [basis("missing_evidence", "product facts", "Fabric weight, density, or opacity detail not found.")]
+    }));
   }
 
-  if (verdict.scores.confidence < 0.45) {
+  if (!product.fields.construction.value || evidenceGaps.some((item) => /construction|seam|stitch|lining|sole|hardware/i.test(item))) {
+    const constructionSignal = shopperConstructionGap(classification.category);
     signals.push(signal({
-      label: "Quality evidence is thin",
-      detail: "Source data is thin enough to cap the verdict, even if the item looks plausible. The recommendation should stay cautious until stronger product facts or owner feedback appear.",
+      label: constructionSignal.label,
+      detail: constructionSignal.detail,
+      related_metric: "durability",
+      category: "construction",
+      confidence: "high",
+      evidence_basis: [
+        basis("missing_evidence", "product facts", "Retailer page did not provide construction details."),
+        basis("missing_evidence", "evidence gaps", evidenceGaps.find((item) => /construction|seam|stitch|lining|sole|hardware/i.test(item)) || constructionExpectation(classification.category))
+      ]
+    }));
+  } else if (missingViews.some((item) => /close|macro|seam|stitch|lining|sole|hardware|edge|fabric/i.test(item))) {
+    signals.push(signal({
+      label: "Close-ups unavailable",
+      detail: "There is no useful close-up proof of seams, fabric texture, lining, hardware, or edge finishing, so the build read stays cautious.",
+      related_metric: "durability",
+      category: "construction",
+      confidence: "medium",
+      evidence_basis: [basis("missing_evidence", "product images", missingViews.find((item) => /close|macro|seam|stitch|lining|sole|hardware|edge|fabric/i.test(item)) || "Close-up product images not available.")]
+    }));
+  }
+
+  if (!product.fields.care.value) {
+    signals.push(signal({
+      label: "Care behaviour unclear",
+      detail: "The page does not show enough care guidance, so wash behaviour, shrinkage risk, and upkeep effort are harder to judge.",
+      related_metric: "durability",
+      category: "care",
+      confidence: "high",
+      evidence_basis: [basis("missing_evidence", "product facts", "Care label not found in captured product facts.")]
+    }));
+  }
+
+  if (!product.fields.sizing.value || evidenceGaps.some((item) => /fit|sizing/i.test(item))) {
+    signals.push(signal({
+      label: "Fit evidence limited",
+      detail: "The page gives limited sizing or owner-fit detail, so the confidence is lower for fit-sensitive shoppers.",
+      related_metric: "durability",
+      category: "fit",
+      confidence: "medium",
+      evidence_basis: [basis("missing_evidence", "product facts", evidenceGaps.find((item) => /fit|sizing/i.test(item)) || "Sizing or fit evidence not found.")]
+    }));
+  }
+
+  if (signals.length < SHOPPER_SIGNAL_LIMIT && (context.evidencePack.externalCoverage === "none" || context.evidencePack.externalCoverage === "limited")) {
+    signals.push(signal({
+      label: "Owner feedback limited",
+      detail: context.evidencePack.externalCoverage === "none"
+        ? "There is no accepted independent owner feedback, so the verdict leans heavily on retailer facts and category knowledge."
+        : "Independent feedback is limited, so confidence stays cautious even where the product facts look promising.",
       related_metric: "quality",
-      severity: "high",
+      category: "evidence",
+      confidence: "high",
+      evidence_basis: [basis("missing_evidence", "external coverage", `External evidence coverage: ${context.evidencePack.externalCoverage}.`)]
+    }));
+  }
+
+  if (signals.length < SHOPPER_SIGNAL_LIMIT && verdict.scores.confidence < 0.45) {
+    signals.push(signal({
+      label: "Confidence is low",
+      detail: "The available product facts are thin enough to cap the verdict, so stronger materials, care, construction, or owner evidence would change the read.",
+      related_metric: "quality",
+      category: "evidence",
       confidence: "high",
       evidence_basis: [basis("missing_evidence", "source confidence", `Source confidence score: ${verdict.scores.confidence}.`)]
     }));
   }
 
-  return dedupeShopperSignals(signals).slice(0, 3);
+  return dedupeShopperSignals(signals).slice(0, SHOPPER_SIGNAL_LIMIT);
+}
+
+function mentionsFabricWeightOrOpacity(product: BackendPayload["page"]["product"], classification: ProductClassification, evidenceGaps: string[]): boolean {
+  const text = [
+    product.fields.materials.value,
+    product.fields.description.value,
+    product.fields.construction.value,
+    classification.material_description,
+    classification.construction_description,
+    ...classification.quality_signals,
+    ...classification.quality_concerns,
+    ...evidenceGaps
+  ].flat().filter(Boolean).join(" ");
+  return /\b(?:gsm|g\/m2|oz|ounce|weight|heavyweight|midweight|lightweight|opaque|opacity|transparent|sheer|density|dense|substantial)\b/i.test(text);
+}
+
+function syntheticPriceLooksHigh(classification: ProductClassification): boolean {
+  if (classification.material_family !== "synthetic") return false;
+  const price = parsePrice(classification.price);
+  if (price === null) return false;
+  if (classification.category === "outerwear") return price >= 150;
+  if (classification.category === "footwear" || classification.category === "bag") return price >= 120;
+  return price >= 80;
 }
 
 function signal(input: LegacySignalInput): ShopperSignal {
@@ -964,7 +1023,7 @@ function shopperMaterialSignal(classification: ProductClassification, material: 
 
 function shopperValueSignal(classification: ProductClassification, verdict: Stage6Verdict): { label: string; detail: string } {
   const label = verdict.scores.value >= 7.2 ? "Strong value" : "Fair value";
-  const lane = `${classification.brand_tier} ${classification.material_family} ${classification.category}`.replace(/\bunknown\b/g, "").replace(/\s+/g, " ").trim();
+  const lane = `${classification.material_family} ${classification.category}`.replace(/\bunknown\b/g, "").replace(/\s+/g, " ").trim();
   const priceLine = `At ${classification.price}, this looks ${verdict.scores.value >= 7.2 ? "strongly" : "reasonably"} priced for ${lane || "this item"}.`;
   return {
     label,
@@ -1000,10 +1059,10 @@ function externalSignalTitle(theme: EvidenceInsightTheme, polarity: "positive" |
 
   if (theme === "shrinkage") return "May shrink after washing";
   if (theme === "fit") return "Fit may be inconsistent";
-  if (theme === "construction") return "Construction unclear";
-  if (theme === "fabric_weight") return "Fabric quality unclear";
+  if (theme === "construction") return "Fabric quality concerns";
+  if (theme === "fabric_weight") return "Fabric quality concerns";
   if (theme === "price_value") return "Value is questionable";
-  if (theme === "durability") return "Durability is uncertain";
+  if (theme === "durability") return "Durability concerns";
   return "Sizing looks risky";
 }
 
@@ -2206,14 +2265,17 @@ function buildStage6Instructions(): string {
     "You are Stage 6 of a clothing Quality Check Chrome extension. Write as a clothing-market expert advising a normal shopper.",
     "Return strict JSON only. Score within the supplied guardrails and stay consistent with matched approved examples.",
     "recommendation_summary must be one punchy sentence under 90 characters. No second explanatory sentence.",
-    "Return max 3 good_signs and max 3 watch_outs. Each item has title, description, optional evidence_type, and optional confidence.",
-    "Good-sign and watch-out titles must be 2-5 words, shopper-facing verdicts, e.g. Strong material choice, Strong value, Holds up well, Fit may be inconsistent, May shrink after washing, Fabric quality unclear, Construction unclear.",
+    "Return only useful shopper signals. It is valid for good_signs, watch_outs, or unverified to be empty.",
+    "Use three signal sections: good_signs for evidence-supported positives, watch_outs for genuine concerns or negative evidence, and unverified for missing or unclear information that limits confidence but is not itself negative.",
+    "Missing information belongs in unverified, not watch_outs. Examples: Construction unclear, Fabric weight unknown, Fit evidence limited, No close-up stitching detail, Care behaviour unclear.",
+    "Keep actual negatives in watch_outs. Examples: May shrink after washing, Fit may be inconsistent, Breathability limited, Fabric quality concerns, Value is questionable, Mixed owner feedback.",
+    "Signal titles must be 2-5 words, shopper-facing verdicts, e.g. Strong material choice, Strong value, Holds up well, Fit may be inconsistent, May shrink after washing, Breathability limited, Construction unclear, Fabric weight unknown.",
     "Descriptions must be 1-2 short sentences, ideally 120-240 characters. Be concrete, consequence-led, and useful at purchase time.",
     "Include fashion insight where evidence supports it: feel, drape, breathability, structure, opacity, softness, ageing, care, styling, and how the fabric may sit or wear.",
     "Caveat uncertainty when evidence is limited. Missing evidence should be framed as uncertainty, not proof of poor quality.",
-    "Never use internal/process language in good_signs or watch_outs: no product fit evidence, product durability evidence, 100% cotton stated, category anchors, score cannot be pushed, retrieved evidence, based on scraped data, guardrails, backend, source data, or model wording.",
+    "Never use internal/process language in good_signs, watch_outs, or unverified: no product fit evidence, product durability evidence, 100% cotton stated, category anchors, score cannot be pushed, retrieved evidence, based on scraped data, guardrails, backend, source data, or model wording.",
     "Each dimension verdict must explain WHY the score is what it is, not merely restate the product: mention material trade-offs, construction signals expected for the category, market price context, and what prevents a higher score.",
-    "For value, compare the observed price to a realistic market lane such as budget, high-street, mid-premium, premium, or luxury, using the supplied market_context and approved examples.",
+    "For value, judge the observed price against item type, material, cut/styling, construction, durability, reviews, comparable products, market_context, and approved examples. Brand tier can be minor context only, not the core value argument.",
     "For ratings below 7.0, include at least one concrete limitation. For ratings above 7.0, include why it beats the average and what caveat remains.",
     "Do not use generic filler like 'construction quality cannot be fully verified from images' unless you specify the exact missing evidence, e.g. seam close-up, button attachment, collar/placket structure, lining, sole attachment, stitch regularity, edge finishing.",
     "Do not hard-claim fibre authenticity, exact construction, leather grade, guaranteed build quality, or long-term durability from images.",
@@ -2298,15 +2360,16 @@ function stage6ResponseSchema() {
   return {
     type: "object",
     additionalProperties: false,
-    required: ["overall_rating", "recommendation", "recommendation_summary", "scores", "confidence_label", "good_signs", "watch_outs", "verdicts", "reasoning_flags", "matched_examples", "evidence_score_effects", "summary"],
+    required: ["overall_rating", "recommendation", "recommendation_summary", "scores", "confidence_label", "good_signs", "watch_outs", "unverified", "verdicts", "reasoning_flags", "matched_examples", "evidence_score_effects", "summary"],
     properties: {
       overall_rating: { type: "number" },
       recommendation: { enum: ["strong_buy", "buy", "consider", "reconsider", "overpriced", "avoid", "not_enough_info"] },
       recommendation_summary: { type: "string" },
       scores: { type: "object", additionalProperties: false, required: Object.keys(scoreProperties), properties: scoreProperties },
       confidence_label: { enum: ["high", "medium", "low"] },
-      good_signs: { type: "array", maxItems: 3, items: shopperSignal },
-      watch_outs: { type: "array", maxItems: 3, items: shopperSignal },
+      good_signs: { type: "array", maxItems: SHOPPER_SIGNAL_LIMIT, items: shopperSignal },
+      watch_outs: { type: "array", maxItems: SHOPPER_SIGNAL_LIMIT, items: shopperSignal },
+      unverified: { type: "array", maxItems: SHOPPER_SIGNAL_LIMIT, items: shopperSignal },
       verdicts: {
         type: "object",
         additionalProperties: false,
@@ -2681,7 +2744,7 @@ function twoSentenceText(value: unknown, fallback: string, maxLength = 280): str
 function cleanSignalTitle(value: unknown): string {
   const fallback = "Quality point";
   const raw = typeof value === "string" ? value.trim() : "";
-  const banned = /\b(?:evidence|stated|retrieved|source|category anchors?|known fibre|product fit|external source|proof|metric)\b/i;
+  const banned = /\b(?:stated|retrieved|source|category anchors?|known fibre|product fit|external source|proof|metric)\b/i;
   const allowedEvidenceTitle = /^Quality evidence is thin$/i.test(raw);
   const candidate = raw && (!banned.test(raw) || allowedEvidenceTitle) ? raw : fallback;
   const words = candidate.split(/\s+/).filter(Boolean);

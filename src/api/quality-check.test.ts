@@ -466,7 +466,7 @@ describe("quality-check API", () => {
     expect(results.map((result) => result.analysis?.verdict.overall_rating)).toEqual([7.2, 7.2, 7.2]);
   });
 
-  it("generates shopper-friendly good signs and watch-outs from product facts and missing evidence", async () => {
+  it("generates shopper-friendly good signs and unverified notes without forcing watch-outs", async () => {
     const result = await handleQualityCheckPayload(createPayload({ imageUrls: [] }), {
       env: testEnv(),
       requestId: () => "shopper-signals"
@@ -474,6 +474,7 @@ describe("quality-check API", () => {
 
     const goodSigns = result.analysis?.verdict.good_signs ?? [];
     const watchOuts = result.analysis?.verdict.watch_outs ?? [];
+    const unverified = result.analysis?.verdict.unverified ?? [];
 
     expect(result.analysis?.verdict.scores).toEqual(
       expect.objectContaining({
@@ -484,10 +485,11 @@ describe("quality-check API", () => {
         confidence: expect.any(Number)
       })
     );
-    expect(goodSigns.length).toBeGreaterThanOrEqual(3);
-    expect(goodSigns.length).toBeLessThanOrEqual(5);
-    expect(watchOuts.length).toBeGreaterThanOrEqual(3);
-    expect(watchOuts.length).toBeLessThanOrEqual(5);
+    expect(goodSigns.length).toBeGreaterThan(0);
+    expect(goodSigns.length).toBeLessThanOrEqual(4);
+    expect(watchOuts.length).toBe(0);
+    expect(unverified.length).toBeGreaterThan(0);
+    expect(unverified.length).toBeLessThanOrEqual(4);
     expect(goodSigns).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -502,22 +504,197 @@ describe("quality-check API", () => {
         })
       ])
     );
-    expect(watchOuts).toEqual(
+    expect(unverified).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           label: "Construction unclear",
-          detail: expect.stringContaining("uncertainty"),
           category: "construction"
         }),
         expect.objectContaining({
-          label: "Care details unclear",
+          label: "Care behaviour unclear",
           category: "care"
+        }),
+        expect.objectContaining({
+          label: "Fit evidence limited",
+          category: "fit"
         })
       ])
     );
-    expectShopperSignalTitles([...goodSigns, ...watchOuts]);
-    expect([...goodSigns, ...watchOuts].every((item) => sentenceCount(item.detail) <= 2)).toBe(true);
-    expect([...goodSigns, ...watchOuts].every((item) => item.detail.length > 0)).toBe(true);
+    expect(watchOuts).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          label: expect.stringMatching(/unclear|unknown|limited/i)
+        })
+      ])
+    );
+    expectShopperSignalTitles([...goodSigns, ...watchOuts, ...unverified]);
+    expect([...goodSigns, ...watchOuts, ...unverified].every((item) => sentenceCount(item.detail) <= 2)).toBe(true);
+    expect([...goodSigns, ...watchOuts, ...unverified].every((item) => item.detail.length > 0)).toBe(true);
+  });
+
+  it("moves model missing-info watch-outs into unverified", async () => {
+    const result = await handleQualityCheckPayload(createPayload({ imageUrls: [] }), {
+      env: testEnv({ OPENAI_API_KEY: "test-openai-key" }),
+      requestId: () => "model-unverified-router",
+      fetcher: async (input) => {
+        expect(String(input)).toBe("https://api.openai.com/v1/responses");
+        return Response.json({
+          output_text: JSON.stringify({
+            overall_rating: 7.2,
+            recommendation: "consider",
+            recommendation_summary: "Good fabric, with a few evidence gaps.",
+            scores: {
+              quality: 7.2,
+              value: 6.8,
+              durability: 6.4,
+              aesthetic: 7.0,
+              confidence: 0.86
+            },
+            confidence_label: "high",
+            good_signs: [
+              {
+                title: "Strong material choice",
+                description: "Merino wool should feel soft, breathable, and warm while looking smarter than basic acrylic knitwear.",
+                evidence_type: "material",
+                confidence: "high"
+              }
+            ],
+            watch_outs: [
+              {
+                title: "Construction unclear",
+                description: "There is no close-up proof of seam linking, rib recovery, or knit density, so long-term shape retention is harder to judge.",
+                evidence_type: "construction",
+                confidence: "medium"
+              },
+              {
+                title: "May shrink after washing",
+                description: "Merino can shrink or felt if washed badly, so careless laundering would create a real fit and durability risk.",
+                evidence_type: "durability",
+                confidence: "medium"
+              }
+            ],
+            unverified: [
+              {
+                title: "Fabric weight unknown",
+                description: "The fibre content is useful, but without knit weight or density it is hard to judge drape, warmth, and opacity.",
+                evidence_type: "material",
+                confidence: "medium"
+              }
+            ],
+            verdicts: {
+              quality: { verdict: "Merino wool is a strong material signal.", confidence: "high", evidence_type: "stated_on_page" },
+              value: { verdict: "The price looks fair for the material and item type.", confidence: "medium", evidence_type: "similar_approved_example" },
+              durability: { verdict: "Care and construction evidence limit the durability read.", confidence: "medium", evidence_type: "general_material_knowledge" },
+              aesthetic: { verdict: "The styling is clean and versatile.", confidence: "medium", evidence_type: "inferred_from_image" }
+            },
+            reasoning_flags: [],
+            matched_examples: [],
+            evidence_score_effects: [],
+            summary: "Good fabric, but not fully verified."
+          })
+        });
+      }
+    });
+
+    expect(result.analysis?.verdict.watch_outs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          label: "May shrink after washing"
+        })
+      ])
+    );
+    expect(result.analysis?.verdict.watch_outs).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          label: "Construction unclear"
+        })
+      ])
+    );
+    expect(result.analysis?.verdict.unverified).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          label: "Construction unclear",
+          category: "construction"
+        }),
+        expect.objectContaining({
+          label: "Fabric weight unknown",
+          category: "material"
+        })
+      ])
+    );
+  });
+
+  it("keeps actual negative material and value trade-offs in watch-outs", async () => {
+    const payload = createPayload({ imageUrls: [] });
+    payload.page.product.fields.materials = field("100% polyester");
+    payload.classification = {
+      ...payload.classification,
+      category: "shirt",
+      material_family: "synthetic",
+      material_description: "100% polyester.",
+      price: "£95",
+      quality_signals: [],
+      quality_concerns: ["synthetic-heavy fabric may feel less breathable"]
+    };
+
+    const result = await handleQualityCheckPayload(payload, {
+      env: testEnv(),
+      requestId: () => "synthetic-watch-outs"
+    });
+
+    expect(result.analysis?.verdict.watch_outs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          label: "Breathability limited",
+          category: "material"
+        }),
+        expect.objectContaining({
+          label: "Price looks high",
+          category: "value"
+        })
+      ])
+    );
+    expect(result.analysis?.verdict.unverified).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          label: "Construction unclear"
+        })
+      ])
+    );
+  });
+
+  it("allows only unverified signals when useful positives and negatives are absent", async () => {
+    const payload = createPayload({ imageUrls: [] });
+    payload.page.product.fields.materials = field(null);
+    payload.page.product.fields.price = field(null);
+    payload.classification = {
+      ...payload.classification,
+      material_family: "unknown",
+      material_description: "",
+      price: "",
+      quality_signals: [],
+      quality_concerns: [],
+      source_confidence_score: 0.36,
+      source_confidence_label: "low"
+    };
+
+    const result = await handleQualityCheckPayload(payload, {
+      env: testEnv(),
+      requestId: () => "only-unverified-signals"
+    });
+
+    expect(result.analysis?.verdict.good_signs).toEqual([]);
+    expect(result.analysis?.verdict.watch_outs).toEqual([]);
+    expect(result.analysis?.verdict.unverified.length).toBeGreaterThan(0);
+    expect(result.analysis?.verdict.unverified).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          label: "Fabric quality unclear",
+          category: "material"
+        })
+      ])
+    );
+    expectShopperSignalTitles(result.analysis?.verdict.unverified ?? []);
   });
 
   it("caps weak source data and returns not_enough_info instead of strong claims", async () => {
@@ -751,10 +928,17 @@ describe("quality-check API", () => {
         })
       ])
     );
-    expect(result.analysis?.verdict.watch_outs).toEqual(
+    expect(result.analysis?.verdict.unverified).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          label: "Care details unclear"
+          label: "Care behaviour unclear"
+        })
+      ])
+    );
+    expect(result.analysis?.verdict.watch_outs).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          label: expect.stringMatching(/unclear|unknown|limited/i)
         })
       ])
     );
@@ -1067,7 +1251,11 @@ describe("quality-check API", () => {
         })
       ])
     );
-    expectShopperSignalTitles([...(result.analysis?.verdict.good_signs ?? []), ...(result.analysis?.verdict.watch_outs ?? [])]);
+    expectShopperSignalTitles([
+      ...(result.analysis?.verdict.good_signs ?? []),
+      ...(result.analysis?.verdict.watch_outs ?? []),
+      ...(result.analysis?.verdict.unverified ?? [])
+    ]);
   });
 
   it("rejects generic weak sources and keeps them out of scoring", async () => {
@@ -1346,9 +1534,6 @@ function expectShopperSignalTitles(items: ShopperSignal[]): void {
     expect(wordCount).toBeGreaterThanOrEqual(2);
     expect(wordCount).toBeLessThanOrEqual(5);
     expect(item.label).not.toMatch(banned);
-    if (item.label !== "Quality evidence is thin") {
-      expect(item.label).not.toMatch(/\bevidence\b/i);
-    }
   }
 }
 

@@ -468,6 +468,7 @@ export type Stage6Verdict = {
   confidence_label: VerdictConfidence;
   good_signs: ShopperSignal[];
   watch_outs: ShopperSignal[];
+  unverified: ShopperSignal[];
   verdicts: {
     quality: DimensionVerdict;
     value: DimensionVerdict;
