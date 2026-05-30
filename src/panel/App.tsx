@@ -67,23 +67,28 @@ export function App() {
     [classification, extraction]
   );
   const analysis = verdict?.analysis ?? null;
-  const productTitle =
-    analysis?.product.title ||
-    getFieldValue(extraction?.snapshot.product.fields.title.value) ||
-    extraction?.snapshot.title ||
-    "No product checked yet";
-  const productBrand = analysis?.classification.brand || getFieldValue(extraction?.snapshot.product.fields.brand.value) || getDomain(extraction?.snapshot.url);
-  const productPrice = analysis?.classification.price || getFieldValue(extraction?.snapshot.product.fields.price.value);
+  const extractedTitle = getFieldValue(extraction?.snapshot.product.fields.title.value) || extraction?.snapshot.title || null;
+  const extractedBrand = getFieldValue(extraction?.snapshot.product.fields.brand.value) || getDomain(extraction?.snapshot.url);
+  const extractedPrice = getFieldValue(extraction?.snapshot.product.fields.price.value);
+  const productTitle = analysis?.product.title || extractedTitle || "No product checked yet";
+  const productBrand = analysis?.classification.brand || extractedBrand;
+  const productPrice = analysis?.classification.price || extractedPrice;
   const productImage = extraction?.snapshot.product.imageUrls[0] ?? null;
+  const loadingTitle = extractedTitle || "Reading current page";
+  const loadingBrand = extraction ? extractedBrand : "Scouted";
+  const loadingPrice = extraction ? extractedPrice : null;
+  const loadingImage = extraction ? productImage : null;
   const lifespan = analysis ? estimateLifespan(analysis.verdict.scores.durability, monthlyWears, analysis.verdict.confidence_label) : null;
   const isChecking = status === "extracting" || status === "sending" || status === "scoring";
   const isStateView = activePage === "summary" && (status === "idle" || isChecking);
   const showAnalysisAction = Boolean(analysis) && activePage === "summary";
 
   async function handleRunCheck() {
-    setStatus("extracting");
+    setVerdict(null);
+    setExtraction(null);
     setError(null);
     setActivePage("summary");
+    setStatus("extracting");
 
     try {
       const activeTabExtraction = await requestActiveTabExtraction();
@@ -118,10 +123,10 @@ export function App() {
           <div className="state-scroll">
             <LoadingState
               status={status}
-              title={productTitle}
-              brand={productBrand}
-              price={productPrice}
-              imageUrl={productImage}
+              title={loadingTitle}
+              brand={loadingBrand}
+              price={loadingPrice}
+              imageUrl={loadingImage}
               classification={classification}
             />
           </div>
@@ -208,7 +213,7 @@ function AnalysisActionBar({
   return (
     <div className="analysis-action-bar">
       <button className="refresh-button" type="button" onClick={onRefresh} disabled={disabled}>
-        Check Again
+        Analyse current page
       </button>
     </div>
   );
@@ -462,7 +467,7 @@ function LoadingState({
     <section className="loading-state">
       <div className="loading-product">
         <div className="loading-product-image">
-          <img src={imageUrl || sampleLinenShirtImage} alt="" />
+          {imageUrl ? <img src={imageUrl} alt="" /> : <ShirtPlaceholder />}
         </div>
         <div>
           <p>{toTitleCase(brand)}</p>
@@ -487,7 +492,7 @@ function LoadingState({
 function TrackerStep({ state, number, title, body }: { state: "done" | "active" | "pending"; number: number; title: string; body: string }) {
   return (
     <div className={`tracker-step tracker-step--${state}`}>
-      <span className="tracker-marker">{state === "done" ? "✓" : number}</span>
+      <span className="tracker-marker">{state === "done" ? "✓" : state === "active" ? <span className="tracker-spinner" aria-hidden="true" /> : number}</span>
       <div>
         <strong>{title}</strong>
         <p>{body}</p>
@@ -504,24 +509,15 @@ function LoadingSkeleton() {
         <div className="skeleton-stack">
           <div className="skeleton-line skeleton-line--wide" />
           <div className="skeleton-line skeleton-line--medium" />
-          <div className="skeleton-grade-row">
-            <div className="skeleton-block skeleton-score" />
-            <div className="skeleton-stack">
-              <div className="skeleton-line skeleton-line--score" />
-              <div className="skeleton-pill" />
-            </div>
-          </div>
         </div>
       </div>
-      <div className="skeleton-card">
-        <div className="skeleton-line skeleton-line--short" />
-        <div className="skeleton-row" />
-        <div className="skeleton-row" />
+      <div className="skeleton-verdict">
+        <div className="skeleton-line skeleton-line--full" />
+        <div className="skeleton-line skeleton-line--long" />
       </div>
-      <div className="skeleton-card">
-        <div className="skeleton-line skeleton-line--short" />
+      <div className="skeleton-tile-row">
         <div className="skeleton-row" />
-        <div className="skeleton-row skeleton-row--narrow" />
+        <div className="skeleton-row" />
       </div>
     </section>
   );
