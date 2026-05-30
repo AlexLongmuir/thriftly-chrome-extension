@@ -102,15 +102,10 @@ function createMockVerdict(payload: BackendPayload): BackendVerdict {
             label: "Backend required",
             detail: "Without backend analysis, these signals are placeholders.",
             related_metric: "quality",
-            strength: "low",
+            category: "evidence",
+            strength: "medium",
             confidence: payload.classification.source_confidence_label,
-            evidence_basis: [
-              {
-                type: "missing_evidence",
-                source: "mock backend",
-                claim: "Backend API URL is not configured."
-              }
-            ]
+            evidence_basis: [{ type: "missing_evidence", source: "mock backend", claim: "Backend analysis was not configured." }]
           }
         ],
         watch_outs: [
@@ -118,15 +113,10 @@ function createMockVerdict(payload: BackendPayload): BackendVerdict {
             label: "Mock result",
             detail: "Do not use this fallback as a real quality call.",
             related_metric: "quality",
+            category: "evidence",
             severity: "high",
             confidence: "high",
-            evidence_basis: [
-              {
-                type: "missing_evidence",
-                source: "mock backend",
-                claim: "Backend API URL is not configured."
-              }
-            ]
+            evidence_basis: [{ type: "missing_evidence", source: "mock backend", claim: "Local mock fallback is not a real quality analysis." }]
           }
         ],
         verdicts: {

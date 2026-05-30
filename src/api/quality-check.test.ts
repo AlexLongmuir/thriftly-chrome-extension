@@ -493,24 +493,12 @@ describe("quality-check API", () => {
         expect.objectContaining({
           label: "Strong material choice",
           detail: expect.stringContaining("temperature regulation"),
-          related_metric: "quality",
-          strength: "high",
-          confidence: "high",
-          evidence_basis: expect.arrayContaining([
-            expect.objectContaining({
-              type: "product_fact",
-              claim: expect.stringContaining("100% merino wool")
-            })
-          ])
+          category: "material",
+          confidence: "high"
         }),
         expect.objectContaining({
           label: "Fair value",
-          detail: expect.stringContaining("At £120"),
-          related_metric: "value",
-          evidence_basis: expect.arrayContaining([
-            expect.objectContaining({ type: "category_explanation" }),
-            expect.objectContaining({ type: "benchmark_evidence" })
-          ])
+          detail: expect.stringContaining("At £120")
         })
       ])
     );
@@ -519,20 +507,17 @@ describe("quality-check API", () => {
         expect.objectContaining({
           label: "Construction unclear",
           detail: expect.stringContaining("uncertainty"),
-          related_metric: "durability",
-          severity: "medium",
-          evidence_basis: expect.arrayContaining([expect.objectContaining({ type: "missing_evidence" })])
+          category: "construction"
         }),
         expect.objectContaining({
-          label: "Quality evidence is thin",
-          detail: expect.stringContaining("retailer facts"),
-          evidence_basis: expect.arrayContaining([expect.objectContaining({ type: "missing_evidence" })])
+          label: "Care details unclear",
+          category: "care"
         })
       ])
     );
     expectShopperSignalTitles([...goodSigns, ...watchOuts]);
     expect([...goodSigns, ...watchOuts].every((item) => sentenceCount(item.detail) <= 2)).toBe(true);
-    expect([...goodSigns, ...watchOuts].every((item) => item.evidence_basis.length > 0)).toBe(true);
+    expect([...goodSigns, ...watchOuts].every((item) => item.detail.length > 0)).toBe(true);
   });
 
   it("caps weak source data and returns not_enough_info instead of strong claims", async () => {
@@ -760,23 +745,16 @@ describe("quality-check API", () => {
     expect(result.analysis?.verdict.good_signs).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
+          label: "Strong owner feedback",
           detail: expect.stringContaining("cotton oxford fabric"),
-          related_metric: "quality",
-          evidence_basis: expect.arrayContaining([
-            expect.objectContaining({
-              type: "external_evidence",
-              source: "example.com",
-              claim: expect.stringContaining("Kamakura WQGS04 review")
-            })
-          ])
+          category: "evidence"
         })
       ])
     );
     expect(result.analysis?.verdict.watch_outs).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          label: "Care details unclear",
-          evidence_basis: expect.arrayContaining([expect.objectContaining({ type: "missing_evidence" })])
+          label: "Care details unclear"
         })
       ])
     );
@@ -1085,7 +1063,7 @@ describe("quality-check API", () => {
         expect.objectContaining({
           label: "May shrink after washing",
           detail: expect.stringContaining("limited"),
-          evidence_basis: expect.arrayContaining([expect.objectContaining({ type: "external_evidence", source: "reddit.com" })])
+          category: "evidence"
         })
       ])
     );

@@ -436,6 +436,7 @@ export type ShopperSignal = {
   label: string;
   detail: string;
   related_metric: ShopperSignalMetric;
+  category?: "material" | "value" | "durability" | "construction" | "fit" | "style" | "care" | "evidence";
   strength?: "low" | "medium" | "high";
   severity?: "low" | "medium" | "high";
   confidence: VerdictConfidence;
@@ -448,6 +449,12 @@ export type MatchedApprovedExample = {
   material_family: MaterialFamily;
   brand_tier: BrandTier;
   price_band: string;
+  brand: string;
+  title: string;
+  url: string;
+  price_display: string;
+  image_url?: string | null;
+  score?: number;
   similarity: number;
   expected_scores: VerdictScores;
   recommendation: Recommendation;

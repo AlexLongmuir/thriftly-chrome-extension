@@ -19,7 +19,7 @@ import { requestActiveTabExtraction } from "./chromeApi";
 
 type Status = "idle" | "extracting" | "sending" | "scoring" | "complete" | "error";
 type ActivePage = "summary" | "alternatives" | "how-it-works";
-type SignalIconMetric = ShopperSignal["related_metric"] | "material" | "fit";
+type SignalIconMetric = ShopperSignal["related_metric"] | NonNullable<ShopperSignal["category"]> | "fit";
 
 const DEFAULT_MONTHLY_WEARS = 8;
 const LOADING_STEP_ACKNOWLEDGEMENT_MS = 650;
@@ -152,9 +152,8 @@ export function App() {
                   imageUrl={productImage}
                   verdict={analysis.verdict}
                 />
-                <DescriptionSection verdict={analysis.verdict} />
-                <SignsSection title="Good Signs" tone="positive" items={analysis.verdict.good_signs} />
-                <SignsSection title="Watch-outs" tone="negative" items={analysis.verdict.watch_outs} />
+                <SignsSection title="In its favour" tone="positive" items={analysis.verdict.good_signs} />
+                <SignsSection title="Worth watching" tone="negative" items={analysis.verdict.watch_outs} />
                 <AlternativesSection approvedExamples={analysis.approved_examples} onViewAll={() => setActivePage("alternatives")} />
                 <HowScoresSection verdict={analysis.verdict} />
               </>
@@ -380,8 +379,8 @@ function SampleSignalRow({
 }) {
   return (
     <div className="sign-row">
-      <div className="sign-icon" aria-hidden="true">
-        <SignalIcon metric={metric} tone={tone} />
+      <div className={`sign-icon sign-icon--${tone}`} aria-hidden="true">
+        <SignalIcon category={metric} tone={tone} />
       </div>
       <div>
         <strong>{title}</strong>
@@ -542,61 +541,57 @@ function ProductHero({
   verdict: Stage6Verdict;
 }) {
   const score = scoreOutOf100(verdict.overall_rating);
-  const tone = scoreTone(score);
+  const verdictLine = conciseSentence(verdict.recommendation_summary || verdict.summary);
 
   return (
     <section className="scouted-hero">
-      <div className="scouted-product-image" aria-label={imageUrl ? "Product image" : "Product image unavailable"}>
-        {imageUrl ? <img src={imageUrl} alt="" /> : <span>Image unavailable</span>}
-      </div>
-      <div className="scouted-product-copy">
-        <div className="brand-line">
-          <p>{toTitleCase(brand)}</p>
+      <div className="scouted-product-row">
+        <div className="scouted-product-image" aria-label={imageUrl ? "Product image" : "Product image unavailable"}>
+          {imageUrl ? <img src={imageUrl} alt="" /> : <ShirtPlaceholder />}
         </div>
-        <div className="item-line">
+        <div className="scouted-product-copy">
+          <p>{toTitleCase(brand)}</p>
           <h2>{title}</h2>
           {price ? <span>{price}</span> : null}
         </div>
-        <div className="grade-line">
-          <div className={`grade-tile grade-tile--${tone}`}>{gradeFor(verdict.overall_rating)}</div>
-          <div className="grade-meta">
-            <strong className={`score-text score-text--${tone}`}>{score}<span>/100</span></strong>
-            <span className={`recommendation-tag recommendation-tag--${verdict.recommendation}`}>{recommendationLabel(verdict.recommendation)}</span>
-          </div>
+      </div>
+      <div className="result-divider" />
+      <div className="rating-row">
+        <div className="grade-tile">
+          <div className="grade-letter">{gradeFor(verdict.overall_rating)}</div>
+          <div className="grade-score">{score}<small>/100</small></div>
+        </div>
+        <div className="rating-right">
+          <span className={`recommendation-tag recommendation-tag--${verdict.recommendation}`}>{recommendationLabel(verdict.recommendation)}</span>
+          <p className="verdict-line">"{verdictLine}"</p>
         </div>
       </div>
-    </section>
-  );
-}
-
-function DescriptionSection({ verdict }: { verdict: Stage6Verdict }) {
-  return (
-    <section className="description-section">
-      <h2>{conciseSentence(verdict.recommendation_summary || verdict.summary)}</h2>
     </section>
   );
 }
 
 function SignsSection({ title, tone, items }: { title: string; tone: "positive" | "negative"; items: ShopperSignal[] }) {
+  if (items.length === 0) return null;
+
   return (
     <section className="panel-section sign-section">
       <SectionHeader title={title} />
       <div className="sign-list">
-        {items.length ? items.map((item) => {
-          const level = item.strength ?? item.severity ?? "medium";
+        {items.map((item) => {
+          const level = item.confidence ?? "medium";
           return (
             <div className="sign-row" key={`${title}-${item.label}`}>
-              <div className="sign-icon" aria-hidden="true">
-                <SignalIcon metric={item.related_metric} tone={tone} />
+              <div className={`sign-icon sign-icon--${tone}`} aria-hidden="true">
+                <SignalIcon category={item.category ?? item.related_metric} tone={tone} />
               </div>
               <div>
                 <strong>{item.label}</strong>
-                <p>{conciseSentence(item.detail)}</p>
+                <p>{item.detail.trim()}</p>
               </div>
               <span className={`signal-dot signal-dot--${tone}-${level}`} aria-label={`${level} ${tone} signal`} />
             </div>
           );
-        }) : <p className="muted sign-empty">No evidence-grounded signals generated.</p>}
+        })}
       </div>
     </section>
   );
@@ -814,10 +809,11 @@ function LifespanSection({
 
 function AlternativesSection({ approvedExamples, onViewAll }: { approvedExamples: MatchedApprovedExample[]; onViewAll: () => void }) {
   const alternatives = buildAlternatives(approvedExamples);
+  if (alternatives.length === 0) return null;
 
   return (
     <section className="panel-section alternatives-section">
-      <SectionHeader title="Alternatives" />
+      <SectionHeader title="Other options" />
       <div className="alternative-list">
         {alternatives.slice(0, 2).map((alternative) => (
           <AlternativeRow key={alternative.url} alternative={alternative} />
@@ -849,36 +845,32 @@ function AlternativesPage({ approvedExamples, onBack }: { approvedExamples: Matc
 function ViewAllAlternativesRow({ count, onViewAll }: { count: number; onViewAll: () => void }) {
   return (
     <button className="view-all-row" type="button" onClick={onViewAll}>
-      <span>View All Alternatives</span>
-      <span>{count} Options</span>
-      <span className="chevron" aria-hidden="true" />
+      <span>View all {count} alternatives</span>
+      <ChevronRightIcon />
     </button>
   );
 }
 
 function buildAlternatives(approvedExamples: MatchedApprovedExample[]): AlternativeItem[] {
-  return placeholderAlternatives.map((alternative, index) => {
-    const approvedExample = approvedExamples[index];
-    return approvedExample
-      ? {
-          ...alternative,
-          rating: scoreOutOf100(approvedExample.expected_scores.value),
-          itemName: toTitleCase(`${formatLabel(approvedExample.material_family)} ${formatLabel(approvedExample.category)}`),
-          price: approvedExample.price_band
-        }
-      : {
-          ...alternative,
-          brand: toTitleCase(alternative.brand),
-          itemName: toTitleCase(alternative.itemName)
-        };
-  });
+  return approvedExamples
+    .filter((approvedExample) => approvedExample.brand && approvedExample.title && approvedExample.url && approvedExample.price_display)
+    .map((approvedExample) => ({
+      brand: approvedExample.brand,
+      itemName: approvedExample.title,
+      price: approvedExample.price_display,
+      rating: approvedExample.score ?? scoreOutOf100(approvedExample.expected_scores.value),
+      url: approvedExample.url,
+      thumbnail: approvedExample.image_url ?? null
+    }));
 }
 
 function AlternativeRow({ alternative }: { alternative: AlternativeItem }) {
-  const tone = scoreTone(alternative.rating);
+  function handleOpenAlternative() {
+    window.open(alternative.url, "_blank", "noopener,noreferrer");
+  }
 
   return (
-    <a className="alternative-row" href={alternative.url} target="_blank" rel="noreferrer">
+    <button className="alternative-row" type="button" onClick={handleOpenAlternative}>
       <div className="alternative-thumb">
         {alternative.thumbnail ? <img src={alternative.thumbnail} alt="" /> : <span />}
       </div>
@@ -888,39 +880,42 @@ function AlternativeRow({ alternative }: { alternative: AlternativeItem }) {
       </div>
       <div className="alternative-score">
         <span>{alternative.price}</span>
-        <strong className={`score-text score-text--${tone}`}>{alternative.rating}/100</strong>
+        <strong>{alternative.rating}<small>/100</small></strong>
       </div>
-      <span className="chevron" aria-hidden="true" />
-    </a>
+    </button>
   );
 }
 
 function HowScoresSection({ verdict }: { verdict: Stage6Verdict }) {
+  const [openCategory, setOpenCategory] = useState("Quality");
   const rows = [
     { title: "Quality", score: verdict.scores.quality, verdict: verdict.verdicts.quality },
     { title: "Value", score: verdict.scores.value, verdict: verdict.verdicts.value },
     { title: "Durability", score: verdict.scores.durability, verdict: verdict.verdicts.durability },
     { title: "Style", score: verdict.scores.aesthetic, verdict: verdict.verdicts.aesthetic }
-  ];
+  ].filter((row) => Number.isFinite(row.score) && row.verdict.verdict.trim());
+
+  if (rows.length === 0) return null;
 
   return (
     <section className="panel-section score-explainer">
-      <SectionHeader title="How Scores Are Calculated" />
+      <SectionHeader title="Why this score?" />
       <div className="score-card-list">
         {rows.map((row) => {
           const score = scoreOutOf100(row.score);
-          const tone = scoreTone(score);
+          const isOpen = openCategory === row.title;
           return (
-            <details className="score-card" key={row.title} open={row.title === "Quality"}>
-              <summary>
+            <div className={`score-card${isOpen ? " score-card--open" : ""}`} key={row.title}>
+              <button className="score-card-head" type="button" onClick={() => setOpenCategory(row.title)} aria-expanded={isOpen}>
                 <span>{row.title}</span>
-                <span>
-                  <strong className={`score-text score-text--${tone}`}>{score}/100</strong>
-                  <span className="chevron" aria-hidden="true" />
-                </span>
-              </summary>
-              <p>{row.verdict.verdict}</p>
-            </details>
+                <strong>{score}<small>/100</small></strong>
+                {isOpen ? <ChevronDownIcon /> : null}
+              </button>
+              <div className="score-card-body" aria-hidden={!isOpen}>
+                <Meter value={score} max={100} />
+                <p>{row.verdict.verdict}</p>
+              </div>
+            </div>
           );
         })}
       </div>
@@ -968,85 +963,96 @@ type AlternativeItem = {
   thumbnail: string | null;
 };
 
-const placeholderAlternatives: AlternativeItem[] = [
-  {
-    brand: "Uniqlo",
-    itemName: "Oxford Slim Fit Long Sleeved Shirt",
-    price: "£29.90",
-    rating: 74,
-    url: "https://www.uniqlo.com/",
-    thumbnail: null
-  },
-  {
-    brand: "Arket",
-    itemName: "Oxford Shirt",
-    price: "£59",
-    rating: 78,
-    url: "https://www.arket.com/",
-    thumbnail: null
-  },
-  {
-    brand: "Charles Tyrwhitt",
-    itemName: "Non-Iron Oxford Shirt",
-    price: "£39.75",
-    rating: 72,
-    url: "https://www.charlestyrwhitt.com/",
-    thumbnail: null
-  },
-  {
-    brand: "Mango",
-    itemName: "Regular-Fit Cotton Shirt",
-    price: "£35.99",
-    rating: 66,
-    url: "https://shop.mango.com/",
-    thumbnail: null
-  }
-];
-
-function SignalIcon({ metric, tone }: { metric: SignalIconMetric; tone: "positive" | "negative" }) {
-  const strokeWidth = 2.1;
-
-  if (metric === "value") {
+function SignalIcon({ category, tone }: { category: SignalIconMetric; tone: "positive" | "negative" }) {
+  if (category === "material" || category === "quality") {
     return (
-      <svg viewBox="0 0 20 20" role="img" aria-label="Value">
-        <path d="M3.5 5.2V10l6.5 6.5 6.6-6.6-4.8-4.7H3.5Z" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinejoin="round" />
-        <path d="M7.1 7.8h.1" fill="none" stroke="currentColor" strokeWidth={strokeWidth + 1.2} strokeLinecap="round" />
+      <svg viewBox="0 0 24 24" role="img" aria-label="Material">
+        <path d="M7 4l-3 3 2 3v10h12V10l2-3-3-3-4 2H11z" />
       </svg>
     );
   }
 
-  if (metric === "durability") {
+  if (category === "value") {
     return (
-      <svg viewBox="0 0 20 20" role="img" aria-label="Durability">
-        <path d="M10 3.2 15.6 5v4.2c0 3.5-2.2 6.1-5.6 7.6-3.4-1.5-5.6-4.1-5.6-7.6V5L10 3.2Z" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinejoin="round" />
-        <path d="m7.3 10 1.8 1.8 3.8-4" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
+      <svg viewBox="0 0 24 24" role="img" aria-label="Value">
+        <path d="M20 12l-8 8-8-8V4h8z" />
+        <circle cx="8" cy="8" r="1.5" />
       </svg>
     );
   }
 
-  if (metric === "style") {
+  if (category === "durability") {
     return (
-      <svg viewBox="0 0 20 20" role="img" aria-label="Style">
-        <path d="m10 2.8 1.3 4.1 4 1.3-4 1.4-1.3 4-1.4-4-4-1.4 4-1.3L10 2.8Z" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinejoin="round" />
-        <path d="m15 12.5.5 1.4 1.4.5-1.4.5-.5 1.4-.5-1.4-1.4-.5 1.4-.5.5-1.4Z" fill="currentColor" />
+      <svg viewBox="0 0 24 24" role="img" aria-label="Durability">
+        <path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z" />
+        <path d="M8.5 12l2.5 2.5L16 9.5" />
       </svg>
     );
   }
 
-  if (metric === "fit" || tone === "negative") {
+  if (category === "fit") {
     return (
-      <svg viewBox="0 0 20 20" role="img" aria-label="Watch-out">
-        <path d="M10 3.2 17 16H3L10 3.2Z" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinejoin="round" />
-        <path d="M10 7.8v3.8" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" />
-        <path d="M10 14.3h.1" fill="none" stroke="currentColor" strokeWidth={strokeWidth + 1.1} strokeLinecap="round" />
+      <svg viewBox="0 0 24 24" role="img" aria-label="Fit">
+        <rect x="3" y="9" width="18" height="7" rx="1" />
+        <path d="M7 9v2M11 9v3M15 9v2M19 9v3" />
+      </svg>
+    );
+  }
+
+  if (category === "style") {
+    return (
+      <svg viewBox="0 0 24 24" role="img" aria-label="Style">
+        <path d="M12 3l1.5 5 5 1.5-5 1.5-1.5 5-1.5-5-5-1.5 5-1.5z" />
+        <path d="M18 15l.6 2 2 .6-2 .6-.6 2-.6-2-2-.6 2-.6z" />
+      </svg>
+    );
+  }
+
+  if (tone === "negative") {
+    return (
+      <svg viewBox="0 0 24 24" role="img" aria-label="Evidence">
+        <path d="M6 4h9l3 3v13H6z" />
+        <path d="M14 4v4h4M9 12h6M9 16h4" />
       </svg>
     );
   }
 
   return (
-    <svg viewBox="0 0 20 20" role="img" aria-label="Material quality">
-      <path d="M6.8 3.8h6.4l3 4.2-6.2 8.2L3.8 8l3-4.2Z" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinejoin="round" />
-      <path d="M7 8h6" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" />
+    <svg viewBox="0 0 24 24" role="img" aria-label="Signal">
+      <path d="M7 4l-3 3 2 3v10h12V10l2-3-3-3-4 2H11z" />
+    </svg>
+  );
+}
+
+function ChevronRightIcon() {
+  return (
+    <svg className="chevron-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M9 6l6 6-6 6" />
+    </svg>
+  );
+}
+
+function ChevronDownIcon() {
+  return (
+    <svg className="caret-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M6 9l6 6 6-6" />
+    </svg>
+  );
+}
+
+function ShirtPlaceholder() {
+  return (
+    <svg className="shirt-placeholder" width="54" height="60" viewBox="0 0 160 175" aria-hidden="true">
+      <path d="M46 50 L16 70 Q12 73 14 78 L24 96 Q26 100 31 97 L52 84 Z" />
+      <path d="M114 50 L144 70 Q148 73 146 78 L136 96 Q134 100 129 97 L108 84 Z" />
+      <path d="M52 48 L62 48 Q80 66 98 48 L108 48 Q113 49 113 56 L117 152 Q117 160 108 160 L52 160 Q43 160 43 152 L47 56 Q47 49 52 48 Z" />
+      <path d="M62 48 L80 64 L67 50 Z" />
+      <path d="M98 48 L80 64 L93 50 Z" />
+      <line x1="80" y1="64" x2="80" y2="156" />
+      <circle cx="80" cy="84" r="1.8" />
+      <circle cx="80" cy="104" r="1.8" />
+      <circle cx="80" cy="124" r="1.8" />
+      <circle cx="80" cy="144" r="1.8" />
     </svg>
   );
 }

@@ -150,36 +150,36 @@ type EvidencePack = {
 type ScoreGuardrails = Record<keyof Omit<VerdictScores, "confidence">, { min: number; max: number }>;
 
 const APPROVED_EXAMPLES: MatchedApprovedExample[] = [
-  example("approved_merino_knit_mid_premium_001", "knitwear", "wool", "mid-premium", "£80-£150", [7.8, 7.8, 7.0, 7.5, 0.86], "buy"),
-  example("approved_cashmere_knit_luxury_001", "knitwear", "wool", "luxury", "£600+", [8.8, 4.8, 6.8, 8.7, 0.84], "overpriced"),
-  example("approved_wool_blend_knit_high_street_001", "knitwear", "blend", "high-street", "£40-£90", [6.4, 6.8, 6.0, 6.5, 0.78], "consider"),
-  example("approved_acrylic_knit_budget_001", "knitwear", "synthetic", "budget", "under £40", [4.4, 5.4, 4.8, 5.2, 0.74], "reconsider"),
-  example("approved_linen_shirt_mid_premium_001", "shirt", "linen", "mid-premium", "£60-£120", [7.2, 7.1, 6.6, 7.4, 0.82], "buy"),
-  example("approved_cotton_linen_shirt_high_street_001", "shirt", "blend", "high-street", "£30-£70", [6.4, 7.0, 6.2, 6.6, 0.78], "consider"),
-  example("approved_cotton_shirt_budget_001", "shirt", "cotton", "budget", "under £30", [5.4, 6.2, 5.6, 5.4, 0.76], "consider"),
-  example("approved_synthetic_shirt_high_street_001", "shirt", "synthetic", "high-street", "£30-£60", [4.8, 4.8, 5.0, 5.8, 0.72], "reconsider"),
-  example("approved_leather_trainers_high_street_001", "footwear", "leather", "high-street", "£40-£90", [6.4, 7.0, 6.3, 6.2, 0.78], "consider"),
-  example("approved_leather_trainers_premium_001", "footwear", "leather", "premium", "£100-£220", [7.4, 6.3, 7.0, 7.1, 0.8], "consider"),
-  example("approved_synthetic_trainers_budget_001", "footwear", "synthetic", "budget", "under £50", [4.8, 5.5, 4.9, 5.5, 0.7], "reconsider"),
-  example("approved_leather_jacket_premium_001", "outerwear", "leather", "premium", "£250-£600", [7.5, 6.4, 7.2, 7.8, 0.78], "consider"),
-  example("approved_leather_jacket_luxury_001", "outerwear", "leather", "luxury", "£1200+", [8.2, 4.2, 7.4, 8.6, 0.72], "overpriced"),
-  example("approved_poly_fleece_premium_001", "outerwear", "synthetic", "premium", "£80-£150", [6.8, 7.0, 7.2, 6.1, 0.82], "consider"),
-  example("approved_recycled_fleece_premium_001", "outerwear", "synthetic", "premium", "£120-£220", [7.0, 6.6, 7.3, 6.6, 0.82], "consider"),
-  example("approved_blazer_high_street_001", "outerwear", "blend", "high-street", "£50-£120", [5.8, 6.1, 5.7, 6.3, 0.74], "consider"),
-  example("approved_denim_high_street_001", "denim", "cotton", "high-street", "£35-£80", [6.2, 6.8, 6.5, 6.1, 0.8], "consider"),
-  example("approved_denim_premium_001", "denim", "cotton", "premium", "£120-£250", [7.4, 6.0, 7.2, 7.0, 0.82], "consider"),
-  example("approved_tshirt_cotton_budget_001", "t-shirt", "cotton", "budget", "under £20", [5.2, 6.5, 5.0, 5.2, 0.78], "consider"),
-  example("approved_tshirt_premium_cotton_001", "t-shirt", "cotton", "premium", "£40-£90", [6.8, 5.4, 6.2, 6.8, 0.8], "consider"),
-  example("approved_trousers_wool_mid_premium_001", "trousers", "wool", "mid-premium", "£90-£180", [7.4, 6.8, 7.0, 7.2, 0.8], "buy"),
-  example("approved_trousers_synthetic_high_street_001", "trousers", "synthetic", "high-street", "£30-£80", [5.4, 6.0, 5.7, 5.9, 0.76], "consider"),
-  example("approved_bag_leather_premium_001", "bag", "leather", "premium", "£180-£450", [7.6, 6.4, 7.6, 7.5, 0.78], "consider"),
-  example("approved_bag_synthetic_budget_001", "bag", "synthetic", "budget", "under £50", [4.8, 5.8, 5.0, 5.2, 0.72], "reconsider"),
-  example("approved_dress_viscose_high_street_001", "dress", "viscose", "high-street", "£40-£100", [5.8, 6.4, 5.4, 6.8, 0.76], "consider"),
-  example("approved_dress_silk_premium_001", "dress", "silk", "premium", "£180-£450", [7.8, 6.3, 6.2, 8.0, 0.78], "consider"),
-  example("approved_skirt_wool_mid_premium_001", "skirt", "wool", "mid-premium", "£80-£180", [7.2, 6.7, 6.8, 7.2, 0.78], "consider"),
-  example("approved_activewear_synthetic_premium_001", "activewear", "synthetic", "premium", "£60-£150", [6.8, 6.7, 7.4, 6.2, 0.8], "consider"),
-  example("approved_accessory_leather_high_street_001", "accessory", "leather", "high-street", "£20-£80", [6.0, 6.8, 6.1, 6.0, 0.76], "consider"),
-  example("approved_unknown_thin_page_001", "other", "unknown", "unknown", "unknown", [2.8, 2.8, 2.8, 2.8, 0.2], "not_enough_info")
+  example("approved_merino_knit_mid_premium_001", "knitwear", "wool", "mid-premium", "£80-£150", [7.8, 7.8, 7.0, 7.5, 0.86], "buy", "COS", "Pure Cashmere Jumper", "£135", "https://www.cos.com/"),
+  example("approved_cashmere_knit_luxury_001", "knitwear", "wool", "luxury", "£600+", [8.8, 4.8, 6.8, 8.7, 0.84], "overpriced", "Mr Porter", "Cashmere Sweater", "£695", "https://www.mrporter.com/"),
+  example("approved_wool_blend_knit_high_street_001", "knitwear", "blend", "high-street", "£40-£90", [6.4, 6.8, 6.0, 6.5, 0.78], "consider", "ARKET", "Wool Blend Jumper", "£77", "https://www.arket.com/"),
+  example("approved_acrylic_knit_budget_001", "knitwear", "synthetic", "budget", "under £40", [4.4, 5.4, 4.8, 5.2, 0.74], "reconsider", "H&M", "Rib-Knit Jumper", "£24.99", "https://www2.hm.com/"),
+  example("approved_linen_shirt_mid_premium_001", "shirt", "linen", "mid-premium", "£60-£120", [7.2, 7.1, 6.6, 7.4, 0.82], "buy", "ARKET", "Relaxed Linen Shirt", "£67", "https://www.arket.com/"),
+  example("approved_cotton_linen_shirt_high_street_001", "shirt", "blend", "high-street", "£30-£70", [6.4, 7.0, 6.2, 6.6, 0.78], "consider", "Zara", "Cotton-Linen Shirt", "£45.99", "https://www.zara.com/"),
+  example("approved_cotton_shirt_budget_001", "shirt", "cotton", "budget", "under £30", [5.4, 6.2, 5.6, 5.4, 0.76], "consider", "Uniqlo", "Oxford Shirt", "£29.90", "https://www.uniqlo.com/"),
+  example("approved_synthetic_shirt_high_street_001", "shirt", "synthetic", "high-street", "£30-£60", [4.8, 4.8, 5.0, 5.8, 0.72], "reconsider", "Mango", "Regular-Fit Shirt", "£35.99", "https://shop.mango.com/"),
+  example("approved_leather_trainers_high_street_001", "footwear", "leather", "high-street", "£40-£90", [6.4, 7.0, 6.3, 6.2, 0.78], "consider", "M&S", "Leather Lace-Up Trainers", "£49.50", "https://www.marksandspencer.com/"),
+  example("approved_leather_trainers_premium_001", "footwear", "leather", "premium", "£100-£220", [7.4, 6.3, 7.0, 7.1, 0.8], "consider", "Veja", "Campo Leather Trainers", "£130", "https://www.veja-store.com/"),
+  example("approved_synthetic_trainers_budget_001", "footwear", "synthetic", "budget", "under £50", [4.8, 5.5, 4.9, 5.5, 0.7], "reconsider", "H&M", "Canvas Trainers", "£24.99", "https://www2.hm.com/"),
+  example("approved_leather_jacket_premium_001", "outerwear", "leather", "premium", "£250-£600", [7.5, 6.4, 7.2, 7.8, 0.78], "consider", "AllSaints", "Miller Leather Jacket", "£349", "https://www.allsaints.com/"),
+  example("approved_leather_jacket_luxury_001", "outerwear", "leather", "luxury", "£1200+", [8.2, 4.2, 7.4, 8.6, 0.72], "overpriced", "Celine", "Leather Biker Jacket", "£3,200", "https://www.celine.com/"),
+  example("approved_poly_fleece_premium_001", "outerwear", "synthetic", "premium", "£80-£150", [6.8, 7.0, 7.2, 6.1, 0.82], "consider", "Patagonia", "Micro D Fleece Jacket", "£80", "https://www.patagonia.com/"),
+  example("approved_recycled_fleece_premium_001", "outerwear", "synthetic", "premium", "£120-£220", [7.0, 6.6, 7.3, 6.6, 0.82], "consider", "Patagonia", "Better Sweater Jacket", "£130", "https://www.patagonia.com/"),
+  example("approved_blazer_high_street_001", "outerwear", "blend", "high-street", "£50-£120", [5.8, 6.1, 5.7, 6.3, 0.74], "consider", "Next", "Textured Blazer", "£74", "https://www.next.co.uk/"),
+  example("approved_denim_high_street_001", "denim", "cotton", "high-street", "£35-£80", [6.2, 6.8, 6.5, 6.1, 0.8], "consider", "Uniqlo", "Regular Fit Jeans", "£39.90", "https://www.uniqlo.com/"),
+  example("approved_denim_premium_001", "denim", "cotton", "premium", "£120-£250", [7.4, 6.0, 7.2, 7.0, 0.82], "consider", "A.P.C.", "Petit Standard Jeans", "£190", "https://www.apcstore.com/"),
+  example("approved_tshirt_cotton_budget_001", "t-shirt", "cotton", "budget", "under £20", [5.2, 6.5, 5.0, 5.2, 0.78], "consider", "Uniqlo", "Supima Cotton T-Shirt", "£14.90", "https://www.uniqlo.com/"),
+  example("approved_tshirt_premium_cotton_001", "t-shirt", "cotton", "premium", "£40-£90", [6.8, 5.4, 6.2, 6.8, 0.8], "consider", "Sunspel", "Classic Cotton T-Shirt", "£75", "https://www.sunspel.com/"),
+  example("approved_trousers_wool_mid_premium_001", "trousers", "wool", "mid-premium", "£90-£180", [7.4, 6.8, 7.0, 7.2, 0.8], "buy", "COS", "Tailored Wool Trousers", "£135", "https://www.cos.com/"),
+  example("approved_trousers_synthetic_high_street_001", "trousers", "synthetic", "high-street", "£30-£80", [5.4, 6.0, 5.7, 5.9, 0.76], "consider", "Zara", "Technical Trousers", "£45.99", "https://www.zara.com/"),
+  example("approved_bag_leather_premium_001", "bag", "leather", "premium", "£180-£450", [7.6, 6.4, 7.6, 7.5, 0.78], "consider", "Coach", "Leather Tote Bag", "£295", "https://uk.coach.com/"),
+  example("approved_bag_synthetic_budget_001", "bag", "synthetic", "budget", "under £50", [4.8, 5.8, 5.0, 5.2, 0.72], "reconsider", "H&M", "Shopper Bag", "£19.99", "https://www2.hm.com/"),
+  example("approved_dress_viscose_high_street_001", "dress", "viscose", "high-street", "£40-£100", [5.8, 6.4, 5.4, 6.8, 0.76], "consider", "Mango", "Viscose Shirt Dress", "£59.99", "https://shop.mango.com/"),
+  example("approved_dress_silk_premium_001", "dress", "silk", "premium", "£180-£450", [7.8, 6.3, 6.2, 8.0, 0.78], "consider", "Reformation", "Silk Dress", "£278", "https://www.thereformation.com/"),
+  example("approved_skirt_wool_mid_premium_001", "skirt", "wool", "mid-premium", "£80-£180", [7.2, 6.7, 6.8, 7.2, 0.78], "consider", "ARKET", "Wool A-Line Skirt", "£119", "https://www.arket.com/"),
+  example("approved_activewear_synthetic_premium_001", "activewear", "synthetic", "premium", "£60-£150", [6.8, 6.7, 7.4, 6.2, 0.8], "consider", "Patagonia", "Performance Joggers", "£85", "https://www.patagonia.com/"),
+  example("approved_accessory_leather_high_street_001", "accessory", "leather", "high-street", "£20-£80", [6.0, 6.8, 6.1, 6.0, 0.76], "consider", "M&S", "Leather Belt", "£25", "https://www.marksandspencer.com/"),
+  example("approved_unknown_thin_page_001", "other", "unknown", "unknown", "unknown", [2.8, 2.8, 2.8, 2.8, 0.2], "not_enough_info", "", "", "", "")
 ];
 
 export default async function handler(req: IncomingMessage, res: ServerResponse) {
@@ -471,15 +471,199 @@ function sanitiseStage6Verdict(
     model_status: "model_completed"
   };
 
-  return addShopperSignals(baseVerdict, context);
+  return addShopperSignals(baseVerdict, context, candidate);
 }
 
-function addShopperSignals(verdict: Stage6Verdict, context: Stage6Context): Stage6Verdict {
+function addShopperSignals(verdict: Stage6Verdict, context: Stage6Context, candidate?: Partial<Stage6Verdict>): Stage6Verdict {
+  const fallbackGoodSigns = buildGoodSigns(verdict, context);
+  const fallbackWatchOuts = buildWatchOuts(verdict, context);
   return {
     ...verdict,
-    good_signs: buildGoodSigns(verdict, context),
-    watch_outs: buildWatchOuts(verdict, context)
+    good_signs: completeShopperSignals(validateModelShopperSignals(candidate?.good_signs, "positive", context), fallbackGoodSigns),
+    watch_outs: completeShopperSignals(validateModelShopperSignals(candidate?.watch_outs, "negative", context), fallbackWatchOuts)
   };
+}
+
+type ShopperSignalCategory = NonNullable<ShopperSignal["category"]>;
+
+type LegacySignalInput = {
+  label: string;
+  detail: string;
+  related_metric: ShopperSignalMetric;
+  category?: ShopperSignalCategory;
+  strength?: "low" | "medium" | "high";
+  severity?: "low" | "medium" | "high";
+  confidence: VerdictConfidence;
+  evidence_basis: ShopperSignalEvidenceBasis[];
+};
+
+const SHOPPER_SIGNAL_CATEGORIES: ShopperSignalCategory[] = [
+  "material",
+  "value",
+  "evidence",
+  "construction",
+  "fit",
+  "durability",
+  "style",
+  "care"
+];
+
+const INTERNAL_SIGNAL_LANGUAGE =
+  /\b(?:product fit evidence|product durability evidence|category anchors?|score cannot be pushed|retrieved evidence|based on scraped data|scraped data|backend|model|prompt|schema|stage\s*\d|guardrails?|metric|source data|external source|internal|system|deterministic|heuristic|confidence cap)\b/i;
+const GENERIC_SIGNAL_TITLE =
+  /^(?:quality point|good sign|watch[- ]?out|nice detail|something to note|important point|product evidence|quality evidence|material evidence|durability evidence)$/i;
+
+function validateModelShopperSignals(value: unknown, tone: "positive" | "negative", context: Stage6Context): ShopperSignal[] {
+  if (!Array.isArray(value)) return [];
+  const evidenceText = shopperSignalEvidenceText(context);
+  const accepted: ShopperSignal[] = [];
+
+  for (const item of value) {
+    if (accepted.length >= 3 || !item || typeof item !== "object") continue;
+    const record = item as Record<string, unknown>;
+    const title = cleanText(record.title, "", 64);
+    const description = twoSentenceText(record.description, "", 320);
+    const category = normaliseShopperSignalCategory(record.category ?? record.evidence_type) ?? inferSignalCategory(`${title} ${description}`, tone);
+    const confidence = isVerdictConfidence(record.confidence) ? record.confidence : "medium";
+    const signal: ShopperSignal = {
+      label: title,
+      detail: description,
+      related_metric: metricFromSignalCategory(category),
+      category,
+      strength: tone === "positive" ? confidence : undefined,
+      severity: tone === "negative" ? confidence : undefined,
+      confidence,
+      evidence_basis: [basis("category_explanation", "model shopper signal", `${title}: ${description}`)]
+    };
+
+    if (!isValidModelShopperSignal(signal, evidenceText)) continue;
+    if (accepted.some((existing) => duplicateSignal(existing, signal))) continue;
+    accepted.push(signal);
+  }
+
+  return accepted;
+}
+
+function completeShopperSignals(modelSignals: ShopperSignal[], fallbackSignals: ShopperSignal[]): ShopperSignal[] {
+  const result = [...modelSignals];
+  for (const fallback of fallbackSignals) {
+    if (result.length >= 3) break;
+    if (result.some((existing) => duplicateSignal(existing, fallback))) continue;
+    result.push(fallback);
+  }
+  return result.slice(0, 3);
+}
+
+function isValidModelShopperSignal(signal: ShopperSignal, evidenceText: string): boolean {
+  const titleWords = signal.label.split(/\s+/).filter(Boolean);
+  if (titleWords.length < 2 || titleWords.length > 5) return false;
+  if (signal.detail.length < 40 || signal.detail.length > 320) return false;
+  if (sentenceCount(signal.detail) > 2) return false;
+  if (INTERNAL_SIGNAL_LANGUAGE.test(`${signal.label} ${signal.detail}`)) return false;
+  if (GENERIC_SIGNAL_TITLE.test(signal.label)) return false;
+  if (!hasSignalEvidenceSupport(signal, evidenceText)) return false;
+  return true;
+}
+
+function sentenceCount(value: string): number {
+  return value.match(/[^.!?]+[.!?]+|[^.!?]+$/g)?.filter((item) => item.trim()).length ?? 0;
+}
+
+function hasSignalEvidenceSupport(signal: ShopperSignal, evidenceText: string): boolean {
+  const text = `${signal.label} ${signal.detail}`.toLowerCase();
+  if (/\b(?:unclear|limited|missing|not stated|not shown|not enough|hard to judge|uncertain|cannot verify|not verified)\b/.test(text)) return true;
+  const words = text
+    .replace(/[^a-z0-9£$€.%\s-]/g, " ")
+    .split(/\s+/)
+    .filter((word) => word.length >= 4 && !SIGNAL_SUPPORT_STOP_WORDS.has(word));
+  if (words.some((word) => evidenceText.includes(word))) return true;
+  return Boolean(signal.category && words.length >= 3);
+}
+
+const SIGNAL_SUPPORT_STOP_WORDS = new Set([
+  "this",
+  "that",
+  "with",
+  "from",
+  "into",
+  "than",
+  "then",
+  "they",
+  "them",
+  "what",
+  "when",
+  "where",
+  "which",
+  "because",
+  "could",
+  "would",
+  "should",
+  "looks",
+  "look",
+  "item",
+  "product",
+  "quality",
+  "value",
+  "fabric",
+  "material",
+  "wear",
+  "feel",
+  "judge",
+  "buying"
+]);
+
+function shopperSignalEvidenceText(context: Stage6Context): string {
+  return [
+    JSON.stringify(context.payload.page.product.fields),
+    context.payload.page.visibleText,
+    context.payload.classification.material_description,
+    context.payload.classification.construction_description,
+    ...context.payload.classification.quality_signals,
+    ...context.payload.classification.quality_concerns,
+    ...context.evidencePack.pageEvidence.map((item) => item.claim),
+    ...context.evidencePack.externalEvidence.map((item) => `${item.claim} ${item.concrete_insight}`),
+    ...context.evidencePack.benchmarkEvidence.map((item) => `${item.claim} ${item.concrete_insight}`),
+    ...context.evidencePack.keyExternalInsights,
+    ...context.evidencePack.evidenceGaps,
+    ...context.visual.visual_cues.map((item) => item.cue),
+    ...context.visual.expert_inferences.map((item) => `${item.inference} ${item.why_it_matters} ${item.caveat}`)
+  ]
+    .join(" ")
+    .toLowerCase();
+}
+
+function duplicateSignal(left: ShopperSignal, right: ShopperSignal): boolean {
+  return cleanSignalTitle(left.label).toLowerCase() === cleanSignalTitle(right.label).toLowerCase() || left.detail.toLowerCase() === right.detail.toLowerCase();
+}
+
+function isShopperSignalCategory(value: unknown): value is ShopperSignalCategory {
+  return typeof value === "string" && SHOPPER_SIGNAL_CATEGORIES.includes(value as ShopperSignalCategory);
+}
+
+function normaliseShopperSignalCategory(value: unknown): ShopperSignalCategory | null {
+  if (isShopperSignalCategory(value)) return value;
+  if (value === "price") return "value";
+  if (value === "reviews" || value === "brand" || value === "other") return "evidence";
+  return null;
+}
+
+function inferSignalCategory(text: string, tone: "positive" | "negative"): ShopperSignalCategory {
+  if (/\b(?:cotton|wool|merino|linen|leather|silk|viscose|polyester|nylon|fabric|fibre|fiber|drape|breathab|opacity|soft|handle)\b/i.test(text)) return "material";
+  if (/\b(?:price|priced|value|cost|£|\$|€|discount|expensive|cheap)\b/i.test(text)) return "value";
+  if (/\b(?:review|owner|feedback|forum|reddit|reported|praised|complain)\b/i.test(text)) return "evidence";
+  if (/\b(?:construction|seam|stitch|lining|buttons?|placket|collar|sole|hardware|finish)\b/i.test(text)) return "construction";
+  if (/\b(?:fit|sizing|size|shrink|washing)\b/i.test(text)) return "fit";
+  if (/\b(?:durab|last|age|pilling|wears?|wash|care|upkeep)\b/i.test(text)) return "durability";
+  if (/\b(?:style|shape|silhouette|versatile|colour|color|smart|casual)\b/i.test(text)) return "style";
+  if (/\b(?:brand|retailer|maker|label)\b/i.test(text)) return "evidence";
+  return tone === "negative" ? "evidence" : "material";
+}
+
+function metricFromSignalCategory(category: ShopperSignalCategory): ShopperSignalMetric {
+  if (category === "value") return "value";
+  if (category === "durability" || category === "fit" || category === "care") return "durability";
+  if (category === "style") return "style";
+  return "quality";
 }
 
 function buildGoodSigns(verdict: Stage6Verdict, context: Stage6Context): ShopperSignal[] {
@@ -571,7 +755,7 @@ function buildGoodSigns(verdict: Stage6Verdict, context: Stage6Context): Shopper
     }));
   }
 
-  return dedupeShopperSignals(signals).slice(0, 5);
+  return dedupeShopperSignals(signals).slice(0, 3);
 }
 
 function buildWatchOuts(verdict: Stage6Verdict, context: Stage6Context): ShopperSignal[] {
@@ -688,14 +872,19 @@ function buildWatchOuts(verdict: Stage6Verdict, context: Stage6Context): Shopper
     }));
   }
 
-  return dedupeShopperSignals(signals).slice(0, 5);
+  return dedupeShopperSignals(signals).slice(0, 3);
 }
 
-function signal(input: ShopperSignal): ShopperSignal {
+function signal(input: LegacySignalInput): ShopperSignal {
+  const category = input.category || shopperSignalCategoryFromLegacySignal(input);
   return {
-    ...input,
     label: cleanSignalTitle(input.label),
-    detail: twoSentenceText(input.detail, "Evidence-grounded signal."),
+    detail: twoSentenceText(input.detail, "Evidence-grounded signal.", 300),
+    related_metric: input.related_metric,
+    category,
+    strength: input.strength,
+    severity: input.severity,
+    confidence: input.confidence,
     evidence_basis: input.evidence_basis.filter((item) => item.claim.trim()).slice(0, 3)
   };
 }
@@ -712,12 +901,27 @@ function dedupeShopperSignals(items: ShopperSignal[]): ShopperSignal[] {
   const seen = new Set<string>();
   const result: ShopperSignal[] = [];
   for (const item of items) {
-    const key = `${item.label.toLowerCase()}:${item.related_metric}`;
-    if (seen.has(key) || item.evidence_basis.length === 0) continue;
+    const key = `${item.label.toLowerCase()}:${item.category ?? item.related_metric}`;
+    if (seen.has(key)) continue;
     seen.add(key);
     result.push(item);
   }
   return result;
+}
+
+function shopperSignalCategoryFromLegacySignal(input: LegacySignalInput): ShopperSignalCategory {
+  if (input.category) return input.category;
+  if (input.evidence_basis.some((item) => item.type === "external_evidence")) return "evidence";
+  if (input.evidence_basis.some((item) => item.type === "visual_evidence")) return "style";
+  if (input.evidence_basis.some((item) => item.type === "missing_evidence" && /fit|siz|shrink|wash/i.test(item.claim))) return "fit";
+  if (input.evidence_basis.some((item) => item.type === "missing_evidence" && /construction|seam|stitch|lining|sole|hardware/i.test(item.claim))) return "construction";
+  if (input.evidence_basis.some((item) => item.type === "missing_evidence" && /care|wash|upkeep/i.test(item.claim))) return "care";
+  if (input.evidence_basis.some((item) => item.type === "product_fact" && /material|cotton|wool|linen|leather|silk|polyester|nylon/i.test(item.claim))) return "material";
+  if (input.related_metric === "value") return "value";
+  if (input.related_metric === "durability") return "durability";
+  if (input.related_metric === "style") return "style";
+  if (input.evidence_basis.some((item) => item.type === "benchmark_evidence")) return "evidence";
+  return "evidence";
 }
 
 function confidenceFromNumber(value: number): VerdictConfidence {
@@ -807,7 +1011,7 @@ function shopperConstructionGap(category: ProductCategory): { label: string; det
   const missing = categoryConstructionDetails(category);
   return {
     label: "Construction unclear",
-    detail: `The listing does not give enough detail on ${missing}, so the quality score cannot be pushed much higher. This is uncertainty, not a sign of poor construction.`
+    detail: `The listing does not give enough detail on ${missing}. Treat this as uncertainty, not proof of poor construction.`
   };
 }
 
@@ -2002,8 +2206,12 @@ function buildStage6Instructions(): string {
     "You are Stage 6 of a clothing Quality Check Chrome extension. Write as a clothing-market expert advising a normal shopper.",
     "Return strict JSON only. Score within the supplied guardrails and stay consistent with matched approved examples.",
     "recommendation_summary must be one punchy sentence under 90 characters. No second explanatory sentence.",
-    "Good-sign and watch-out labels name the signal; details explain why it matters for buying. Do not repeat or paraphrase the label in the detail.",
-    "Good-sign and watch-out details must be concise: one sentence, under 110 characters, concrete, and consequence-led.",
+    "Return max 3 good_signs and max 3 watch_outs. Each item has title, description, optional evidence_type, and optional confidence.",
+    "Good-sign and watch-out titles must be 2-5 words, shopper-facing verdicts, e.g. Strong material choice, Strong value, Holds up well, Fit may be inconsistent, May shrink after washing, Fabric quality unclear, Construction unclear.",
+    "Descriptions must be 1-2 short sentences, ideally 120-240 characters. Be concrete, consequence-led, and useful at purchase time.",
+    "Include fashion insight where evidence supports it: feel, drape, breathability, structure, opacity, softness, ageing, care, styling, and how the fabric may sit or wear.",
+    "Caveat uncertainty when evidence is limited. Missing evidence should be framed as uncertainty, not proof of poor quality.",
+    "Never use internal/process language in good_signs or watch_outs: no product fit evidence, product durability evidence, 100% cotton stated, category anchors, score cannot be pushed, retrieved evidence, based on scraped data, guardrails, backend, source data, or model wording.",
     "Each dimension verdict must explain WHY the score is what it is, not merely restate the product: mention material trade-offs, construction signals expected for the category, market price context, and what prevents a higher score.",
     "For value, compare the observed price to a realistic market lane such as budget, high-street, mid-premium, premium, or luxury, using the supplied market_context and approved examples.",
     "For ratings below 7.0, include at least one concrete limitation. For ratings above 7.0, include why it beats the average and what caveat remains.",
@@ -2076,16 +2284,29 @@ function stage6ResponseSchema() {
       }
     }
   };
+  const shopperSignal = {
+    type: "object",
+    additionalProperties: false,
+    required: ["title", "description", "evidence_type", "confidence"],
+    properties: {
+      title: { type: "string" },
+      description: { type: "string" },
+      evidence_type: { enum: ["material", "price", "reviews", "construction", "fit", "durability", "style", "brand", "other"] },
+      confidence: { enum: ["high", "medium", "low"] }
+    }
+  };
   return {
     type: "object",
     additionalProperties: false,
-    required: ["overall_rating", "recommendation", "recommendation_summary", "scores", "confidence_label", "verdicts", "reasoning_flags", "matched_examples", "evidence_score_effects", "summary"],
+    required: ["overall_rating", "recommendation", "recommendation_summary", "scores", "confidence_label", "good_signs", "watch_outs", "verdicts", "reasoning_flags", "matched_examples", "evidence_score_effects", "summary"],
     properties: {
       overall_rating: { type: "number" },
       recommendation: { enum: ["strong_buy", "buy", "consider", "reconsider", "overpriced", "avoid", "not_enough_info"] },
       recommendation_summary: { type: "string" },
       scores: { type: "object", additionalProperties: false, required: Object.keys(scoreProperties), properties: scoreProperties },
       confidence_label: { enum: ["high", "medium", "low"] },
+      good_signs: { type: "array", maxItems: 3, items: shopperSignal },
+      watch_outs: { type: "array", maxItems: 3, items: shopperSignal },
       verdicts: {
         type: "object",
         additionalProperties: false,
@@ -2107,7 +2328,12 @@ function example(
   brandTier: BrandTier,
   priceBandValue: string,
   scores: [number, number, number, number, number],
-  recommendation: Recommendation
+  recommendation: Recommendation,
+  brand: string,
+  title: string,
+  priceDisplay: string,
+  url: string,
+  imageUrl: string | null = null
 ): MatchedApprovedExample {
   return {
     id,
@@ -2115,6 +2341,12 @@ function example(
     material_family: materialFamily,
     brand_tier: brandTier,
     price_band: priceBandValue,
+    brand,
+    title,
+    url,
+    price_display: priceDisplay,
+    image_url: imageUrl,
+    score: Math.round(scores[1] * 10),
     similarity: 0,
     expected_scores: {
       quality: scores[0],

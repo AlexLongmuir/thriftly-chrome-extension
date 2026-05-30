@@ -59,6 +59,22 @@ Do not rewrite unrelated files. The worktree may contain user changes; preserve 
 
 Use concise, evidence-led product language. Do not overstate confidence when the data is partial or inferred.
 
+## Worktree and Chrome Extension Testing
+
+Use git worktrees for parallel implementation work, but do not ask the user to load each worktree's `dist/` directory into Chrome.
+
+Default Chrome testing workflow:
+
+- Treat `/Users/alex/Documents/scouted-extension-active` as the single Chrome-loaded unpacked extension directory.
+- Chrome should be loaded once from `/Users/alex/Documents/scouted-extension-active`.
+- From whichever worktree is being tested, build the extension and sync that worktree's `dist/` into the active directory.
+- Prefer `npm run extension:activate` for this workflow when available.
+- After activation, tell the user to reload the existing unpacked extension in `chrome://extensions`; do not tell them to load a new worktree unless explicitly requested.
+
+For backend/API testing, run the local backend from the worktree under test and build/activate the extension against that endpoint, for example `VITE_QUALITY_CHECK_API_URL=http://127.0.0.1:3000/api/quality-check npm run extension:activate`.
+
+This keeps branch work isolated while preserving one stable Chrome extension path and avoiding duplicate unpacked extensions.
+
 ## Verification
 
 Run relevant local checks when available:
