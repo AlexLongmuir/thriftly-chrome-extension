@@ -38,13 +38,14 @@ Avoid:
 
 ## Typography
 
-Use one high-quality sans-serif UI family for the panel. Manrope is preferred where available; otherwise use the existing system stack. A serif may be used only for a restrained brand wordmark if already present. Do not introduce expressive display fonts into the side panel.
+Use one high-quality sans-serif UI family for the panel. Hanken Grotesk is the approved UI face for the empty and loading states, matching `scouted-final-states.html`; otherwise fall back to Inter and the existing system stack. Fraunces is approved as a restrained editorial serif for the empty-state hook and sample verdict line only. Do not introduce other expressive display fonts into the side panel.
 
 Recommended CSS:
 
 ```css
 :root {
-  --font-sans: Manrope, Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-sans: "Hanken Grotesk", Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-editorial: Fraunces, Georgia, "Times New Roman", serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 }
 ```
@@ -64,6 +65,7 @@ Rules:
 
 - Keep headings compact. In a 360-420px side panel, 19px is already a large title.
 - Do not use all-caps labels. Use Title Case for short UI labels and sentence case for explanatory copy.
+- Empty/loading states should follow the approved reference density: 25px editorial hook, 13px support copy, 15px loading heading, 13.6px tracker titles, 12.4px tracker details, and a 4px footer progress bar.
 - Use `font-variant-numeric: tabular-nums` for scores, prices where useful, and confidence percentages.
 - Do not use viewport-scaled font sizes.
 - Do not use negative letter spacing or forced letter-spaced label styling in compact UI.
@@ -145,7 +147,7 @@ Scouted should not use borders around outer containers, cards, row groups, chips
 
 Use background colour differences to make specific grouped rows distinct from the page background. If a section needs separation, choose a stronger or more muted surface first, then adjust spacing; do not add a box border.
 
-Buttons must use `border-radius: 1000px` and no border.
+Buttons generally use `border-radius: 1000px` and no border. The empty/loading sticky CTA follows the approved reference HTML instead: a full-width dark button with a restrained 13px radius.
 
 Non-button radii should stay restrained:
 

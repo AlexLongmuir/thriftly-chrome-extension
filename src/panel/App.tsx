@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { submitQualityCheck } from "../api/client";
 import { classifyProductEvidence } from "../shared/classification";
+import sampleLinenShirtImage from "./assets/arket-white-linen-shirt.avif";
 import type {
   ActiveTabExtraction,
   BackendAnalysis,
@@ -8,6 +9,7 @@ import type {
   DimensionVerdict,
   MatchedApprovedExample,
   ProductClassification,
+  Recommendation,
   ShopperSignal,
   Stage6Verdict
 } from "../shared/messages";
@@ -15,10 +17,37 @@ import { createBackendPayload } from "../shared/pageSnapshot";
 import { createVisualEnrichment } from "../shared/visualEnrichment";
 import { requestActiveTabExtraction } from "./chromeApi";
 
-type Status = "idle" | "extracting" | "sending" | "complete" | "error";
+type Status = "idle" | "extracting" | "sending" | "scoring" | "complete" | "error";
 type ActivePage = "summary" | "alternatives" | "how-it-works";
+type SignalIconMetric = ShopperSignal["related_metric"] | "material" | "fit";
 
 const DEFAULT_MONTHLY_WEARS = 8;
+const LOADING_STEP_ACKNOWLEDGEMENT_MS = 650;
+const SAMPLE_ANALYSIS = {
+  brand: "Arket",
+  title: "Relaxed Linen Shirt",
+  price: "£67",
+  overall_rating: 7.4,
+  recommendation: "consider" as Recommendation,
+  verdict: "A real linen shirt at a fair price - you'll just be ironing it.",
+  positiveSignals: [
+    {
+      metric: "material" as SignalIconMetric,
+      title: "Strong material choice",
+      body: "Linen is breathable, natural, and right for a relaxed summer shirt."
+    },
+    {
+      metric: "value" as SignalIconMetric,
+      title: "Strong value",
+      body: "The material-to-price ratio looks good for this category."
+    }
+  ],
+  watchOut: {
+    metric: "fit" as SignalIconMetric,
+    title: "Fit may be inconsistent",
+    body: "Some feedback suggests the cut may not work for every build."
+  }
+};
 
 export function App() {
   const [status, setStatus] = useState<Status>("idle");
@@ -46,12 +75,10 @@ export function App() {
   const productBrand = analysis?.classification.brand || getFieldValue(extraction?.snapshot.product.fields.brand.value) || getDomain(extraction?.snapshot.url);
   const productPrice = analysis?.classification.price || getFieldValue(extraction?.snapshot.product.fields.price.value);
   const productImage = extraction?.snapshot.product.imageUrls[0] ?? null;
-  const detectedProductLabel = buildDetectedProductLabel(
-    getFieldValue(extraction?.snapshot.product.fields.brand.value),
-    getFieldValue(extraction?.snapshot.product.fields.title.value)
-  );
   const lifespan = analysis ? estimateLifespan(analysis.verdict.scores.durability, monthlyWears, analysis.verdict.confidence_label) : null;
-  const isChecking = status === "extracting" || status === "sending";
+  const isChecking = status === "extracting" || status === "sending" || status === "scoring";
+  const isStateView = activePage === "summary" && (status === "idle" || isChecking);
+  const showAnalysisAction = Boolean(analysis) && activePage === "summary";
 
   async function handleRunCheck() {
     setStatus("extracting");
@@ -64,6 +91,8 @@ export function App() {
 
       setStatus("sending");
       const response = await submitQualityCheck(createBackendPayload(activeTabExtraction.snapshot));
+      setStatus("scoring");
+      await waitForLoadingStepAcknowledgement();
       setVerdict(response);
       setStatus("complete");
     } catch (caughtError) {
@@ -74,23 +103,39 @@ export function App() {
   }
 
   return (
-    <main className="panel-shell">
-      <TopActionBar
-        status={status}
-        onRefresh={handleRunCheck}
-        disabled={isChecking}
-        onHowItWorks={() => setActivePage("how-it-works")}
-        isHowPage={activePage === "how-it-works"}
-      />
-
+    <main className={`panel-shell${isStateView ? " panel-shell--state" : ""}`}>
       {activePage === "how-it-works" ? (
         <HowItWorksPage onBack={() => setActivePage("summary")} />
+      ) : status === "idle" ? (
+        <>
+          <div className="state-scroll">
+            <EmptyState onShowTechnicalDetails={() => setActivePage("how-it-works")} />
+          </div>
+          <StateFooter buttonLabel="Analyse this item" onClick={handleRunCheck} disabled={false} />
+        </>
+      ) : isChecking ? (
+        <>
+          <div className="state-scroll">
+            <LoadingState
+              status={status}
+              title={productTitle}
+              brand={productBrand}
+              price={productPrice}
+              imageUrl={productImage}
+              classification={classification}
+            />
+          </div>
+          <LoadingFooter />
+        </>
       ) : (
         <>
           {error ? (
             <section className="notice notice--error">
               <h2>Check Failed</h2>
               <p>{error}</p>
+              <button className="primary-button" type="button" onClick={handleRunCheck}>
+                Try again
+              </button>
             </section>
           ) : null}
 
@@ -99,6 +144,7 @@ export function App() {
               <AlternativesPage approvedExamples={analysis.approved_examples} onBack={() => setActivePage("summary")} />
             ) : (
               <>
+                {showAnalysisAction ? <AnalysisActionBar onRefresh={handleRunCheck} disabled={isChecking} /> : null}
                 <ProductHero
                   title={productTitle}
                   brand={productBrand}
@@ -113,8 +159,6 @@ export function App() {
                 <HowScoresSection verdict={analysis.verdict} />
               </>
             )
-          ) : isChecking ? (
-            <LoadingState />
           ) : extraction && classification ? (
             <>
               <ProductSummary title={productTitle} brand={productBrand} price={productPrice} imageUrl={productImage} classification={classification} />
@@ -123,11 +167,9 @@ export function App() {
                 <p>Backend verdict is not available yet. The raw extraction and structured classification are available in debug mode.</p>
               </section>
             </>
-          ) : status === "idle" ? (
-            <EmptyState onRunCheck={handleRunCheck} detectedProductLabel={detectedProductLabel} />
           ) : null}
 
-          <section className="debug-shell">
+          {status !== "error" ? <section className="debug-shell">
             <button className="debug-toggle" type="button" onClick={() => setDebugOpen((open) => !open)}>
               <span>Debug Evidence</span>
               <span>{debugOpen ? "Hide" : "Show"}</span>
@@ -150,41 +192,25 @@ export function App() {
                 />
               </div>
             ) : null}
-          </section>
+          </section> : null}
         </>
       )}
     </main>
   );
 }
 
-function TopActionBar({
-  status,
+function AnalysisActionBar({
   onRefresh,
-  disabled,
-  onHowItWorks,
-  isHowPage
+  disabled
 }: {
-  status: Status;
   onRefresh: () => void;
   disabled: boolean;
-  onHowItWorks: () => void;
-  isHowPage: boolean;
 }) {
   return (
-    <div className="top-action-bar">
-      <span>Scouted</span>
-      <div className="top-bar-actions">
-        {!isHowPage ? (
-          <button className="secondary-nav-button" type="button" onClick={onHowItWorks}>
-            How It Works
-          </button>
-        ) : null}
-        {status !== "idle" ? (
-          <button className="refresh-button" type="button" onClick={onRefresh} disabled={disabled}>
-            {status === "extracting" ? "Reading" : status === "sending" ? "Analysing" : "Check Again"}
-          </button>
-        ) : null}
-      </div>
+    <div className="analysis-action-bar">
+      <button className="refresh-button" type="button" onClick={onRefresh} disabled={disabled}>
+        Check Again
+      </button>
     </div>
   );
 }
@@ -281,69 +307,193 @@ function HowItWorksPage({ onBack }: { onBack: () => void }) {
   );
 }
 
-function EmptyState({ onRunCheck, detectedProductLabel }: { onRunCheck: () => void; detectedProductLabel: string | null }) {
-  const previewItems = [
-    "Score And Recommendation",
-    "Good Signs",
-    "Watch-outs",
-    "Evidence Notes"
-  ];
-
+function EmptyState({ onShowTechnicalDetails }: { onShowTechnicalDetails: () => void }) {
   return (
-    <section className="precheck-card">
-      <div className="precheck-copy">
-        <p className="eyebrow">Ready To Scout</p>
-        <h2>Quality Read For This Item</h2>
-        <p>Checks the active product page for material, value, durability and evidence signals.</p>
+    <section className="empty-preview-state">
+      <div className="empty-hook">
+        <h1>Is it actually<br />worth buying?</h1>
+        <p>Scouted reads the page and what reviewers really say, then gives a straight verdict.</p>
       </div>
-      <div className="precheck-action">
-        {detectedProductLabel ? <p className="ready-line">{detectedProductLabel}</p> : null}
-        <button className="primary-button" type="button" onClick={onRunCheck}>
-          Analyse This Item
-        </button>
-      </div>
-      <div className="preview-section">
-        <SectionHeader title="What You’ll See" />
-        <div className="preview-list">
-          {previewItems.map((item, index) => (
-            <div className="preview-row" key={item}>
-              <span aria-hidden="true">{index + 1}</span>
-              <strong>{item}</strong>
-            </div>
-          ))}
-        </div>
-      </div>
-      <p className="precheck-note">Works best when the product page includes material, price and care details.</p>
+      <SampleAnalysisCard />
+      <HowScoutedWorks onShowTechnicalDetails={onShowTechnicalDetails} />
     </section>
   );
 }
 
-function LoadingState() {
-  const progressItems = [
-    "Reading Product Page",
-    "Checking Material Signals",
-    "Assessing Value",
-    "Building Verdict"
-  ];
+function SampleAnalysisCard() {
+  const score = scoreOutOf100(SAMPLE_ANALYSIS.overall_rating);
+  const tone = scoreTone(score);
 
   return (
-    <>
-      <section className="analysis-card">
-        <div className="analysis-heading">
-          <p className="eyebrow">Analysis In Progress</p>
-          <h2>Building The Verdict</h2>
+    <section className="sample-analysis" aria-label="Sample analysis">
+      <div className="sample-tag"><span aria-hidden="true" />Sample analysis</div>
+      <div className="sample-product-row">
+        <div className="sample-product-image">
+          <img src={sampleLinenShirtImage} alt="" />
         </div>
-        <div className="progress-list">
-          {progressItems.map((item, index) => (
-            <div className="progress-row" key={item}>
-              <span className={index === 0 ? "progress-dot progress-dot--active" : "progress-dot"} aria-hidden="true" />
-              <strong>{item}</strong>
-            </div>
+        <div className="sample-product-copy">
+          <p>{SAMPLE_ANALYSIS.brand}</p>
+          <strong>{SAMPLE_ANALYSIS.title}</strong>
+          <span>{SAMPLE_ANALYSIS.price}</span>
+        </div>
+      </div>
+      <div className="sample-score-row">
+        <div className={`sample-grade grade-tile--${tone}`}>
+          <strong>{gradeFor(SAMPLE_ANALYSIS.overall_rating)}</strong>
+          <span>{score}/100</span>
+        </div>
+        <div className="sample-verdict-copy">
+          <span className={`recommendation-tag recommendation-tag--${SAMPLE_ANALYSIS.recommendation}`}>
+            {recommendationLabel(SAMPLE_ANALYSIS.recommendation)}
+          </span>
+          <blockquote>"{SAMPLE_ANALYSIS.verdict}"</blockquote>
+        </div>
+      </div>
+      <section className="panel-section sign-section">
+        <SectionHeader title="Good Signs" />
+        <div className="sign-list">
+          {SAMPLE_ANALYSIS.positiveSignals.map((signal) => (
+            <SampleSignalRow key={signal.title} tone="positive" metric={signal.metric} title={signal.title} body={signal.body} />
           ))}
         </div>
       </section>
+      <section className="panel-section sign-section">
+        <SectionHeader title="Watch-outs" />
+        <div className="sign-list">
+          <SampleSignalRow tone="negative" metric={SAMPLE_ANALYSIS.watchOut.metric} title={SAMPLE_ANALYSIS.watchOut.title} body={SAMPLE_ANALYSIS.watchOut.body} />
+        </div>
+      </section>
+    </section>
+  );
+}
+
+function SampleSignalRow({
+  tone,
+  metric,
+  title,
+  body
+}: {
+  tone: "positive" | "negative";
+  metric: SignalIconMetric;
+  title: string;
+  body: string;
+}) {
+  return (
+    <div className="sign-row">
+      <div className="sign-icon" aria-hidden="true">
+        <SignalIcon metric={metric} tone={tone} />
+      </div>
+      <div>
+        <strong>{title}</strong>
+        <p>{body}</p>
+      </div>
+      <span className={`signal-dot signal-dot--${tone}-medium`} aria-label={`medium ${tone} signal`} />
+    </div>
+  );
+}
+
+function HowScoutedWorks({ onShowTechnicalDetails }: { onShowTechnicalDetails: () => void }) {
+  const steps = [
+    { title: "Reads this page", body: "Material, price, care and construction signals." },
+    { title: "Gathers the evidence", body: "Independent reviews, forums and comparable items." },
+    { title: "Gives a verdict", body: "Score, good signs, watch-outs and a buy call." }
+  ];
+
+  return (
+    <section className="how-compact">
+      <SectionHeader title="How Scouted Works" />
+      <div className="how-step-list">
+        {steps.map((step, index) => (
+          <div className="how-step-row" key={step.title}>
+            <span>{index + 1}</span>
+            <div>
+              <strong>{step.title}</strong>
+              <p>{step.body}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+      <button className="technical-link-button" type="button" onClick={onShowTechnicalDetails}>
+        Learn more about the technical implementation
+      </button>
+    </section>
+  );
+}
+
+function StateFooter({ buttonLabel, onClick, disabled }: { buttonLabel: string; onClick: () => void; disabled: boolean }) {
+  return (
+    <footer className="state-footer">
+      <button className="primary-button primary-button--wide" type="button" onClick={onClick} disabled={disabled}>
+        {buttonLabel}
+      </button>
+    </footer>
+  );
+}
+
+function LoadingFooter() {
+  return (
+    <footer className="loading-footer">
+      <div className="loading-progress" aria-hidden="true"><span /></div>
+      <p>Usually takes 5-10 seconds</p>
+    </footer>
+  );
+}
+
+function LoadingState({
+  status,
+  title,
+  brand,
+  price,
+  imageUrl,
+  classification
+}: {
+  status: Status;
+  title: string;
+  brand: string;
+  price: string | null;
+  imageUrl: string | null;
+  classification: ProductClassification | null;
+}) {
+  const stepOneState = status === "extracting" ? "active" : "done";
+  const stepTwoState = status === "scoring" ? "done" : status === "sending" ? "active" : "pending";
+  const stepThreeState = status === "scoring" ? "active" : "pending";
+  const signalLine = classification ? loadingSignalLine(classification, price) : "Reading product details from this page.";
+
+  return (
+    <section className="loading-state">
+      <div className="loading-product">
+        <div className="loading-product-image">
+          <img src={imageUrl || sampleLinenShirtImage} alt="" />
+        </div>
+        <div>
+          <p>{toTitleCase(brand)}</p>
+          <h2>{title}</h2>
+          {price ? <span>{price}</span> : null}
+        </div>
+      </div>
+      <div className="loading-title-row">
+        <span className="small-spinner" aria-hidden="true" />
+        <h2>Analysing this item...</h2>
+      </div>
+      <div className="tracker-list">
+        <TrackerStep state={stepOneState} number={1} title="Read this page" body={status === "extracting" ? "Extracting material, price and care signals." : signalLine} />
+        <TrackerStep state={stepTwoState} number={2} title="Gathering the evidence" body="Checking reviews, forums and comparable shirts..." />
+        <TrackerStep state={stepThreeState} number={3} title="Scoring & writing the verdict" body="Good signs, watch-outs and a buy call." />
+      </div>
       <LoadingSkeleton />
-    </>
+    </section>
+  );
+}
+
+function TrackerStep({ state, number, title, body }: { state: "done" | "active" | "pending"; number: number; title: string; body: string }) {
+  return (
+    <div className={`tracker-step tracker-step--${state}`}>
+      <span className="tracker-marker">{state === "done" ? "✓" : number}</span>
+      <div>
+        <strong>{title}</strong>
+        <p>{body}</p>
+      </div>
+    </div>
   );
 }
 
@@ -410,8 +560,8 @@ function ProductHero({
         <div className="grade-line">
           <div className={`grade-tile grade-tile--${tone}`}>{gradeFor(verdict.overall_rating)}</div>
           <div className="grade-meta">
-            <strong className={`score-text score-text--${tone}`}>{score}/100</strong>
-            <span className={`recommendation-tag recommendation-tag--${verdict.recommendation}`}>{toTitleCase(formatLabel(verdict.recommendation))}</span>
+            <strong className={`score-text score-text--${tone}`}>{score}<span>/100</span></strong>
+            <span className={`recommendation-tag recommendation-tag--${verdict.recommendation}`}>{recommendationLabel(verdict.recommendation)}</span>
           </div>
         </div>
       </div>
@@ -437,7 +587,7 @@ function SignsSection({ title, tone, items }: { title: string; tone: "positive" 
           return (
             <div className="sign-row" key={`${title}-${item.label}`}>
               <div className="sign-icon" aria-hidden="true">
-                {metricInitial(item.related_metric)}
+                <SignalIcon metric={item.related_metric} tone={tone} />
               </div>
               <div>
                 <strong>{item.label}</strong>
@@ -853,14 +1003,52 @@ const placeholderAlternatives: AlternativeItem[] = [
   }
 ];
 
-function metricInitial(metric: ShopperSignal["related_metric"]): string {
-  const marks: Record<ShopperSignal["related_metric"], string> = {
-    quality: "+",
-    value: "$",
-    durability: "~",
-    style: "*"
-  };
-  return marks[metric];
+function SignalIcon({ metric, tone }: { metric: SignalIconMetric; tone: "positive" | "negative" }) {
+  const strokeWidth = 2.1;
+
+  if (metric === "value") {
+    return (
+      <svg viewBox="0 0 20 20" role="img" aria-label="Value">
+        <path d="M3.5 5.2V10l6.5 6.5 6.6-6.6-4.8-4.7H3.5Z" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinejoin="round" />
+        <path d="M7.1 7.8h.1" fill="none" stroke="currentColor" strokeWidth={strokeWidth + 1.2} strokeLinecap="round" />
+      </svg>
+    );
+  }
+
+  if (metric === "durability") {
+    return (
+      <svg viewBox="0 0 20 20" role="img" aria-label="Durability">
+        <path d="M10 3.2 15.6 5v4.2c0 3.5-2.2 6.1-5.6 7.6-3.4-1.5-5.6-4.1-5.6-7.6V5L10 3.2Z" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinejoin="round" />
+        <path d="m7.3 10 1.8 1.8 3.8-4" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    );
+  }
+
+  if (metric === "style") {
+    return (
+      <svg viewBox="0 0 20 20" role="img" aria-label="Style">
+        <path d="m10 2.8 1.3 4.1 4 1.3-4 1.4-1.3 4-1.4-4-4-1.4 4-1.3L10 2.8Z" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinejoin="round" />
+        <path d="m15 12.5.5 1.4 1.4.5-1.4.5-.5 1.4-.5-1.4-1.4-.5 1.4-.5.5-1.4Z" fill="currentColor" />
+      </svg>
+    );
+  }
+
+  if (metric === "fit" || tone === "negative") {
+    return (
+      <svg viewBox="0 0 20 20" role="img" aria-label="Watch-out">
+        <path d="M10 3.2 17 16H3L10 3.2Z" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinejoin="round" />
+        <path d="M10 7.8v3.8" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" />
+        <path d="M10 14.3h.1" fill="none" stroke="currentColor" strokeWidth={strokeWidth + 1.1} strokeLinecap="round" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg viewBox="0 0 20 20" role="img" aria-label="Material quality">
+      <path d="M6.8 3.8h6.4l3 4.2-6.2 8.2L3.8 8l3-4.2Z" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinejoin="round" />
+      <path d="M7 8h6" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" />
+    </svg>
+  );
 }
 
 function scoreOutOf100(score: number): number {
@@ -868,7 +1056,7 @@ function scoreOutOf100(score: number): number {
 }
 
 function scoreTone(score: number): "positive" | "neutral" | "warning" {
-  if (score >= 72) return "positive";
+  if (score >= 85) return "positive";
   if (score >= 55) return "neutral";
   return "warning";
 }
@@ -1019,17 +1207,15 @@ function getDomain(url: string | undefined): string {
   }
 }
 
-function buildDetectedProductLabel(brand: string | null, productName: string | null): string | null {
-  const parts = [brand, productName].filter((part): part is string => Boolean(part?.trim()));
-  return parts.length ? parts.join(" ") : null;
+function gradeFor(score: number): string {
+  return toGrade(scoreOutOf100(score));
 }
 
-function gradeFor(score: number): string {
-  if (score >= 8.5) return "A";
-  if (score >= 7.5) return "A-";
-  if (score >= 6.5) return "B+";
-  if (score >= 5.5) return "B";
-  if (score >= 4.5) return "C";
+function toGrade(score: number): string {
+  if (score >= 85) return "A";
+  if (score >= 65) return "B+";
+  if (score >= 50) return "B";
+  if (score >= 35) return "C";
   return "D";
 }
 
@@ -1047,6 +1233,22 @@ function toTitleCase(value: string): string {
   return value
     .toLowerCase()
     .replace(/\b[a-z]/g, (letter) => letter.toUpperCase());
+}
+
+function recommendationLabel(recommendation: Recommendation): string {
+  if (recommendation === "strong_buy" || recommendation === "buy") return "Buy";
+  if (recommendation === "not_enough_info") return "Not enough info";
+  return toTitleCase(formatLabel(recommendation));
+}
+
+function loadingSignalLine(classification: ProductClassification, price: string | null): string {
+  const material = classification.material_family !== "unknown" ? toTitleCase(formatLabel(classification.material_family)) : null;
+  const details = [material, price, classification.material_description ? "care label found" : null].filter(Boolean);
+  return details.length ? `${details.join(", ")}.` : "Material, price and care signals captured.";
+}
+
+function waitForLoadingStepAcknowledgement(): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, LOADING_STEP_ACKNOWLEDGEMENT_MS));
 }
 
 function conciseSentence(value: string): string {

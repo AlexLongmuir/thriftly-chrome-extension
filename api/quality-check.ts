@@ -490,14 +490,15 @@ function buildGoodSigns(verdict: Stage6Verdict, context: Stage6Context): Shopper
   const material = textField(product.fields.materials.value);
   const pageMaterialEvidence = context.evidencePack.pageEvidence.find((item) => /material/i.test(item.claim));
   const positiveExternal = [...context.evidencePack.externalEvidence, ...context.evidencePack.benchmarkEvidence]
-    .filter((item) => item.sentiment === "positive" || item.sentiment === "mixed")
+    .filter((item) => item.sentiment === "positive" || (item.sentiment === "mixed" && !isRiskTheme(item.theme)))
     .sort((left, right) => right.confidence * right.relevance_score - left.confidence * left.relevance_score);
   const styleInference = context.visual.expert_inferences.find((item) => item.score_dimension === "aesthetic" && positiveVisualEffect(item.score_effect));
 
   if (material && classification.material_family !== "unknown") {
+    const materialSignal = shopperMaterialSignal(classification, material);
     signals.push(signal({
-      label: labelFromMaterial(classification.material_family, material),
-      detail: "A known fibre gives the quality score a firmer base than styling or images alone.",
+      label: materialSignal.label,
+      detail: materialSignal.detail,
       related_metric: "quality",
       strength: verdict.scores.quality >= 7 ? "high" : "medium",
       confidence: confidenceFromNumber(product.fields.materials.confidence),
@@ -506,9 +507,10 @@ function buildGoodSigns(verdict: Stage6Verdict, context: Stage6Context): Shopper
   }
 
   if (classification.price && verdict.scores.value >= 6.4) {
+    const valueSignal = shopperValueSignal(classification, verdict);
     signals.push(signal({
-      label: "Price looks fair",
-      detail: "The price sits in line with comparable category anchors for the score.",
+      label: valueSignal.label,
+      detail: valueSignal.detail,
       related_metric: "value",
       strength: verdict.scores.value >= 7.2 ? "high" : "medium",
       confidence: "medium",
@@ -522,9 +524,10 @@ function buildGoodSigns(verdict: Stage6Verdict, context: Stage6Context): Shopper
   for (const item of positiveExternal) {
     if (signals.length >= 4) break;
     const metric = signalMetricFromAffects(item.affects);
+    const externalSignal = shopperExternalSignal(item, "positive");
     signals.push(signal({
-      label: labelFromExternalEvidence(item.theme, item.applies_to_product),
-      detail: sentenceText(item.concrete_insight || item.claim, item.claim, 110),
+      label: externalSignal.label,
+      detail: externalSignal.detail,
       related_metric: metric,
       strength: item.applies_to_product === "directly" && item.confidence >= 0.65 ? "high" : "medium",
       confidence: confidenceFromNumber(item.confidence),
@@ -534,8 +537,11 @@ function buildGoodSigns(verdict: Stage6Verdict, context: Stage6Context): Shopper
 
   if (styleInference && signals.length < 5) {
     signals.push(signal({
-      label: "Style cue visible",
-      detail: sentenceText(styleInference.inference, "The image supports the style score, but not build quality.", 110),
+      label: "Clean visual read",
+      detail: twoSentenceText(
+        styleInference.caveat ? `${styleInference.inference} ${styleInference.caveat}` : styleInference.inference,
+        "The image supports the style read, but not build quality."
+      ),
       related_metric: "style",
       strength: styleInference.score_effect === "medium_positive" ? "high" : "medium",
       confidence: styleInference.confidence,
@@ -545,8 +551,8 @@ function buildGoodSigns(verdict: Stage6Verdict, context: Stage6Context): Shopper
 
   if (signals.length < 3 && verdict.scores.quality >= 6.2) {
     signals.push(signal({
-      label: "Quality baseline is solid",
-      detail: "Material and category anchors lift it above an average weak-evidence item.",
+      label: "Solid quality baseline",
+      detail: twoSentenceText(verdict.verdicts.quality.verdict, "The material and category read look better than a thinly described basic, though the support is not complete."),
       related_metric: "quality",
       strength: verdict.scores.quality >= 7 ? "high" : "medium",
       confidence: verdict.confidence_label,
@@ -556,8 +562,8 @@ function buildGoodSigns(verdict: Stage6Verdict, context: Stage6Context): Shopper
 
   if (signals.length < 3 && verdict.scores.durability >= 6) {
     signals.push(signal({
-      label: "Durability not weak",
-      detail: "Nothing drags durability down hard, though proof is still incomplete.",
+      label: "Good long-term wear",
+      detail: twoSentenceText(verdict.verdicts.durability.verdict, "Nothing obvious drags durability down hard, though the support is still incomplete."),
       related_metric: "durability",
       strength: "medium",
       confidence: verdict.confidence_label,
@@ -573,11 +579,28 @@ function buildWatchOuts(verdict: Stage6Verdict, context: Stage6Context): Shopper
   const classification = context.payload.classification;
   const signals: ShopperSignal[] = [];
   const evidenceGaps = context.evidencePack.evidenceGaps;
+  const negativeExternal = [...context.evidencePack.externalEvidence, ...context.evidencePack.benchmarkEvidence]
+    .filter((item) => item.sentiment === "negative" || item.sentiment === "mixed")
+    .sort((left, right) => right.confidence * right.relevance_score - left.confidence * left.relevance_score);
+
+  for (const item of negativeExternal) {
+    if (signals.length >= 2) break;
+    const externalSignal = shopperExternalSignal(item, "negative");
+    signals.push(signal({
+      label: externalSignal.label,
+      detail: externalSignal.detail,
+      related_metric: watchOutMetricFromExternal(item),
+      severity: item.applies_to_product === "directly" && item.confidence >= 0.65 ? "high" : "medium",
+      confidence: confidenceFromNumber(item.confidence),
+      evidence_basis: [basis(isBenchmarkEvidenceType(item.evidence_type) ? "benchmark_evidence" : "external_evidence", item.source_domain, item.claim)]
+    }));
+  }
 
   if (!product.fields.construction.value || evidenceGaps.some((item) => /construction/i.test(item))) {
+    const constructionSignal = shopperConstructionGap(classification.category);
     signals.push(signal({
-      label: "Construction details not evidenced",
-      detail: conciseConstructionGapDetail(classification.category),
+      label: constructionSignal.label,
+      detail: constructionSignal.detail,
       related_metric: "durability",
       severity: verdict.scores.durability < 5.8 ? "high" : "medium",
       confidence: "high",
@@ -590,8 +613,8 @@ function buildWatchOuts(verdict: Stage6Verdict, context: Stage6Context): Shopper
 
   if (!product.fields.care.value) {
     signals.push(signal({
-      label: "Care details not evidenced",
-      detail: "Wash behaviour and upkeep risk stay uncertain without care instructions.",
+      label: "Care details unclear",
+      detail: "The page does not show enough care guidance, so wash behaviour, shrinkage, and upkeep risk remain uncertain.",
       related_metric: "durability",
       severity: "medium",
       confidence: "high",
@@ -600,9 +623,18 @@ function buildWatchOuts(verdict: Stage6Verdict, context: Stage6Context): Shopper
   }
 
   if (!product.fields.sizing.value || evidenceGaps.some((item) => /fit|sizing|shrinkage|washing/i.test(item))) {
+    const fitGap = evidenceGaps.find((item) => /shrinkage|washing/i.test(item))
+      ? {
+          label: "May shrink after washing",
+          detail: "Fit after washing is not well supported by the available details. Treat shrinkage as a caution rather than a deal-breaker unless more owner feedback confirms it."
+        }
+      : {
+          label: "Fit may be inconsistent",
+          detail: "The page does not give enough sizing or fit-after-wear detail, so the buy recommendation is less secure for fit-sensitive shoppers."
+        };
     signals.push(signal({
-      label: "Fit after wear is uncertain",
-      detail: "Weak fit or shrinkage evidence makes post-wash value harder to trust.",
+      label: fitGap.label,
+      detail: fitGap.detail,
       related_metric: "value",
       severity: "medium",
       confidence: "medium",
@@ -612,8 +644,10 @@ function buildWatchOuts(verdict: Stage6Verdict, context: Stage6Context): Shopper
 
   if (context.evidencePack.externalCoverage === "none" || context.evidencePack.externalCoverage === "limited") {
     signals.push(signal({
-      label: context.evidencePack.externalCoverage === "none" ? "No accepted outside proof" : "Outside proof is limited",
-      detail: "The verdict leans on retailer facts instead of independent product proof.",
+      label: "Quality evidence is thin",
+      detail: context.evidencePack.externalCoverage === "none"
+        ? "There is no accepted independent product feedback, so the verdict leans heavily on retailer facts. Treat it as a cautious read, not a settled call."
+        : "Independent feedback is limited, so the verdict has to stay cautious even where the product facts look plausible.",
       related_metric: "quality",
       severity: context.evidencePack.externalCoverage === "none" ? "medium" : "low",
       confidence: "high",
@@ -623,8 +657,8 @@ function buildWatchOuts(verdict: Stage6Verdict, context: Stage6Context): Shopper
 
   if (verdict.scores.value < 5.8) {
     signals.push(signal({
-      label: "Value looks stretched",
-      detail: "The price asks more than the quality evidence comfortably supports.",
+      label: "Value is questionable",
+      detail: twoSentenceText(verdict.verdicts.value.verdict, "The price asks more than the available quality detail comfortably supports."),
       related_metric: "value",
       severity: verdict.scores.value < 5 ? "high" : "medium",
       confidence: verdict.confidence_label,
@@ -634,8 +668,8 @@ function buildWatchOuts(verdict: Stage6Verdict, context: Stage6Context): Shopper
 
   if (classification.material_family === "unknown" || !product.fields.materials.value) {
     signals.push(signal({
-      label: "Material composition not evidenced",
-      detail: "Without fibre content, the fabric-quality call has to stay cautious.",
+      label: "Fabric quality unclear",
+      detail: "The listing does not give a reliable fibre composition, so fabric quality, handle, breathability, and likely wear are hard to judge.",
       related_metric: "quality",
       severity: "high",
       confidence: "high",
@@ -645,8 +679,8 @@ function buildWatchOuts(verdict: Stage6Verdict, context: Stage6Context): Shopper
 
   if (verdict.scores.confidence < 0.45) {
     signals.push(signal({
-      label: "Low confidence result",
-      detail: "Thin source data caps the verdict even if the item looks plausible.",
+      label: "Quality evidence is thin",
+      detail: "Source data is thin enough to cap the verdict, even if the item looks plausible. The recommendation should stay cautious until stronger product facts or owner feedback appear.",
       related_metric: "quality",
       severity: "high",
       confidence: "high",
@@ -660,8 +694,8 @@ function buildWatchOuts(verdict: Stage6Verdict, context: Stage6Context): Shopper
 function signal(input: ShopperSignal): ShopperSignal {
   return {
     ...input,
-    label: cleanText(input.label, "Evidence signal", 64),
-    detail: sentenceText(input.detail, "Evidence-grounded signal.", 110),
+    label: cleanSignalTitle(input.label),
+    detail: twoSentenceText(input.detail, "Evidence-grounded signal."),
     evidence_basis: input.evidence_basis.filter((item) => item.claim.trim()).slice(0, 3)
   };
 }
@@ -700,41 +734,95 @@ function signalMetricFromAffects(affects: ExternalEvidenceAffects[]): ShopperSig
   return "quality";
 }
 
+function watchOutMetricFromExternal(item: ExternalEvidenceItem): ShopperSignalMetric {
+  if (item.theme === "price_value") return "value";
+  if (item.theme === "fit" || item.theme === "shrinkage") return "value";
+  if (item.theme === "durability") return "durability";
+  return signalMetricFromAffects(item.affects);
+}
+
 function positiveVisualEffect(effect: VisualScoreEffect): boolean {
   return effect === "small_positive" || effect === "medium_positive";
 }
 
-function labelFromMaterial(materialFamily: MaterialFamily, material: string): string {
-  if (/\bmerino\b/i.test(material)) return "Merino wool stated";
-  if (/\bcashmere\b/i.test(material)) return "Cashmere stated";
-  if (/\b100%\s+cotton\b/i.test(material)) return "100% cotton stated";
-  if (materialFamily === "unknown") return "Material stated";
-  return `${formatMetricLabel(materialFamily)} material stated`;
+function shopperMaterialSignal(classification: ProductClassification, material: string): { label: string; detail: string } {
+  const label = classification.material_family === "blend"
+    ? "Practical fabric blend"
+    : classification.material_family === "synthetic"
+      ? "Practical fabric choice"
+      : "Strong material choice";
+  const materialLine = `The listing gives ${material}, which helps judge how the ${classification.category} may feel, wear, and sit.`;
+  return {
+    label,
+    detail: `${materialLine} ${materialQualityInsight(classification)}`
+  };
 }
 
-function labelFromExternalEvidence(theme: EvidenceInsightTheme, applicability: ProductApplicability): string {
-  const scope = applicability === "directly" ? "Product" : applicability === "partially" ? "Related" : "Category";
-  return `${scope} ${theme.replace(/_/g, " ")} evidence`;
+function shopperValueSignal(classification: ProductClassification, verdict: Stage6Verdict): { label: string; detail: string } {
+  const label = verdict.scores.value >= 7.2 ? "Strong value" : "Fair value";
+  const lane = `${classification.brand_tier} ${classification.material_family} ${classification.category}`.replace(/\bunknown\b/g, "").replace(/\s+/g, " ").trim();
+  const priceLine = `At ${classification.price}, this looks ${verdict.scores.value >= 7.2 ? "strongly" : "reasonably"} priced for ${lane || "this item"}.`;
+  return {
+    label,
+    detail: `${priceLine} ${marketPriceContext(classification)}`
+  };
 }
 
-function constructionGapDetail(category: ProductCategory): string {
-  if (category === "shirt") return "Collar, placket, seams, buttons, fabric weight, and shrinkage details were not evidenced.";
-  if (category === "knitwear") return "Knit density, seam linking, rib recovery, pilling, and neckline stability were not evidenced.";
-  if (category === "footwear") return "Sole attachment, lining, stitch regularity, heel counter, and edge finishing were not evidenced.";
-  if (category === "outerwear") return "Lining, seam finishing, hardware attachment, pockets, and edge finishing were not evidenced.";
-  return "Seams, stitching, edges, lining, hardware, and stress-point details were not evidenced.";
+function shopperExternalSignal(item: ExternalEvidenceItem, polarity: "positive" | "negative"): { label: string; detail: string } {
+  const limited = item.confidence < 0.58 || item.source_type === "reddit" || item.source_type === "forum";
+  const directness = item.applies_to_product === "directly"
+    ? ""
+    : item.applies_to_product === "partially"
+      ? ` This is related${limited ? " and limited" : ""} feedback rather than a direct comment on this exact item, so treat it as a caution.`
+      : " This is category-level feedback, so it should guide expectations rather than decide the purchase.";
+  const volumeCaveat = limited && item.applies_to_product === "directly"
+    ? " The feedback base is limited, so it is not conclusive."
+    : "";
+  return {
+    label: externalSignalTitle(item.theme, polarity),
+    detail: `${item.concrete_insight || item.claim}${directness}${volumeCaveat}`
+  };
 }
 
-function conciseConstructionGapDetail(category: ProductCategory): string {
-  if (category === "shirt") return "Missing collar, seam, button, and fabric-weight proof keeps durability capped.";
-  if (category === "knitwear") return "Missing knit-density and pilling evidence keeps durability capped.";
-  if (category === "footwear") return "Missing sole, lining, stitch, and edge proof keeps durability capped.";
-  if (category === "outerwear") return "Missing lining, seam, hardware, and pocket proof keeps durability capped.";
-  return "Missing make and stress-point proof keeps durability capped.";
+function externalSignalTitle(theme: EvidenceInsightTheme, polarity: "positive" | "negative"): string {
+  if (polarity === "positive") {
+    if (theme === "durability") return "Holds up well";
+    if (theme === "price_value") return "Strong value";
+    if (theme === "style") return "Easy to style";
+    if (theme === "comfort") return "Comfort sounds strong";
+    if (theme === "construction") return "Good make reported";
+    return "Strong owner feedback";
+  }
+
+  if (theme === "shrinkage") return "May shrink after washing";
+  if (theme === "fit") return "Fit may be inconsistent";
+  if (theme === "construction") return "Construction unclear";
+  if (theme === "fabric_weight") return "Fabric quality unclear";
+  if (theme === "price_value") return "Value is questionable";
+  if (theme === "durability") return "Durability is uncertain";
+  return "Sizing looks risky";
 }
 
-function formatMetricLabel(value: string): string {
-  return value.replace(/[-_]/g, " ");
+function shopperConstructionGap(category: ProductCategory): { label: string; detail: string } {
+  const missing = categoryConstructionDetails(category);
+  return {
+    label: "Construction unclear",
+    detail: `The listing does not give enough detail on ${missing}, so the quality score cannot be pushed much higher. This is uncertainty, not a sign of poor construction.`
+  };
+}
+
+function categoryConstructionDetails(category: ProductCategory): string {
+  if (category === "shirt") return "collar structure, seams, buttons, stitching, fabric weight, or transparency";
+  if (category === "knitwear") return "knit density, seam linking, rib recovery, pilling, or neckline stability";
+  if (category === "footwear") return "sole attachment, lining, stitch regularity, heel counter structure, or edge finishing";
+  if (category === "outerwear") return "lining, seam finishing, hardware attachment, pockets, or edge finishing";
+  if (category === "denim" || category === "trousers") return "fabric weight, seam finish, waistband structure, pocket bags, reinforcement, or hems";
+  if (category === "bag") return "lining, hardware attachment, seam finishing, edge finishing, or stress points";
+  return "seams, stitching, edges, lining, hardware, or stress points";
+}
+
+function isRiskTheme(theme: EvidenceInsightTheme): boolean {
+  return theme === "fit" || theme === "shrinkage" || theme === "construction" || theme === "fabric_weight";
 }
 
 function retrieveApprovedExamples(classification: ProductClassification): MatchedApprovedExample[] {
@@ -2347,6 +2435,26 @@ function cleanText(value: unknown, fallback: string, maxLength: number): string 
 
   const lastBreak = Math.max(shortened.lastIndexOf(";"), shortened.lastIndexOf(","), shortened.lastIndexOf(" "));
   return `${shortened.slice(0, lastBreak > 0 ? lastBreak : maxLength).trim()}...`;
+}
+
+function twoSentenceText(value: unknown, fallback: string, maxLength = 280): string {
+  const cleaned = cleanText(value, fallback, maxLength * 2)
+    .replace(/\s+/g, " ")
+    .trim();
+  const sentences = cleaned.match(/[^.!?]+[.!?]+|[^.!?]+$/g)?.map((item) => item.trim()).filter(Boolean) || [];
+  const selected = sentences.slice(0, 2).join(" ") || fallback;
+  return cleanText(selected, fallback, maxLength);
+}
+
+function cleanSignalTitle(value: unknown): string {
+  const fallback = "Quality point";
+  const raw = typeof value === "string" ? value.trim() : "";
+  const banned = /\b(?:evidence|stated|retrieved|source|category anchors?|known fibre|product fit|external source|proof|metric)\b/i;
+  const allowedEvidenceTitle = /^Quality evidence is thin$/i.test(raw);
+  const candidate = raw && (!banned.test(raw) || allowedEvidenceTitle) ? raw : fallback;
+  const words = candidate.split(/\s+/).filter(Boolean);
+  const shortened = words.length > 5 ? words.slice(0, 5).join(" ") : candidate;
+  return cleanText(shortened, fallback, 48);
 }
 
 function sentenceText(value: unknown, fallback: string, maxLength: number): string {

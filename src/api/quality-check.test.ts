@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { handleQualityCheckPayload } from "../../api/quality-check";
-import type { BackendPayload, ProductFieldName } from "../shared/messages";
+import type { BackendPayload, ProductFieldName, ShopperSignal } from "../shared/messages";
 
 describe("quality-check API", () => {
   it("skips vision safely when product images are missing", async () => {
@@ -491,7 +491,8 @@ describe("quality-check API", () => {
     expect(goodSigns).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          label: "Merino wool stated",
+          label: "Strong material choice",
+          detail: expect.stringContaining("temperature regulation"),
           related_metric: "quality",
           strength: "high",
           confidence: "high",
@@ -503,7 +504,8 @@ describe("quality-check API", () => {
           ])
         }),
         expect.objectContaining({
-          label: "Price looks fair",
+          label: "Fair value",
+          detail: expect.stringContaining("At £120"),
           related_metric: "value",
           evidence_basis: expect.arrayContaining([
             expect.objectContaining({ type: "category_explanation" }),
@@ -515,18 +517,21 @@ describe("quality-check API", () => {
     expect(watchOuts).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          label: "Construction details not evidenced",
+          label: "Construction unclear",
+          detail: expect.stringContaining("uncertainty"),
           related_metric: "durability",
           severity: "medium",
           evidence_basis: expect.arrayContaining([expect.objectContaining({ type: "missing_evidence" })])
         }),
         expect.objectContaining({
-          label: "No accepted outside proof",
+          label: "Quality evidence is thin",
           detail: expect.stringContaining("retailer facts"),
           evidence_basis: expect.arrayContaining([expect.objectContaining({ type: "missing_evidence" })])
         })
       ])
     );
+    expectShopperSignalTitles([...goodSigns, ...watchOuts]);
+    expect([...goodSigns, ...watchOuts].every((item) => sentenceCount(item.detail) <= 2)).toBe(true);
     expect([...goodSigns, ...watchOuts].every((item) => item.evidence_basis.length > 0)).toBe(true);
   });
 
@@ -770,7 +775,7 @@ describe("quality-check API", () => {
     expect(result.analysis?.verdict.watch_outs).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          label: "Care details not evidenced",
+          label: "Care details unclear",
           evidence_basis: expect.arrayContaining([expect.objectContaining({ type: "missing_evidence" })])
         })
       ])
@@ -1075,6 +1080,16 @@ describe("quality-check API", () => {
       ])
     );
     expect(result.analysis?.key_external_insights).toEqual(expect.arrayContaining([expect.stringContaining("shrinkage")]));
+    expect(result.analysis?.verdict.watch_outs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          label: "May shrink after washing",
+          detail: expect.stringContaining("limited"),
+          evidence_basis: expect.arrayContaining([expect.objectContaining({ type: "external_evidence", source: "reddit.com" })])
+        })
+      ])
+    );
+    expectShopperSignalTitles([...(result.analysis?.verdict.good_signs ?? []), ...(result.analysis?.verdict.watch_outs ?? [])]);
   });
 
   it("rejects generic weak sources and keeps them out of scoring", async () => {
@@ -1344,6 +1359,23 @@ function field(value: string | string[] | null) {
     source: value ? ("json_ld" as const) : null,
     evidence: value ? ["test evidence"] : []
   };
+}
+
+function expectShopperSignalTitles(items: ShopperSignal[]): void {
+  const banned = /\b(?:stated|retrieved|source|category anchors?|known fibre|product fit|external source|metric)\b/i;
+  for (const item of items) {
+    const wordCount = item.label.split(/\s+/).filter(Boolean).length;
+    expect(wordCount).toBeGreaterThanOrEqual(2);
+    expect(wordCount).toBeLessThanOrEqual(5);
+    expect(item.label).not.toMatch(banned);
+    if (item.label !== "Quality evidence is thin") {
+      expect(item.label).not.toMatch(/\bevidence\b/i);
+    }
+  }
+}
+
+function sentenceCount(value: string): number {
+  return value.match(/[^.!?]+[.!?]+|[^.!?]+$/g)?.filter((item) => item.trim()).length ?? 0;
 }
 
 const FIELD_NAMES: ProductFieldName[] = [
