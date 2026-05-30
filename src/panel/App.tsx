@@ -20,6 +20,7 @@ import { requestActiveTabExtraction } from "./chromeApi";
 type Status = "idle" | "extracting" | "sending" | "scoring" | "complete" | "error";
 type ActivePage = "summary" | "alternatives" | "how-it-works";
 type SignalIconMetric = ShopperSignal["related_metric"] | NonNullable<ShopperSignal["category"]> | "fit";
+type SignalTone = "positive" | "negative" | "neutral";
 
 const DEFAULT_MONTHLY_WEARS = 8;
 const LOADING_STEP_ACKNOWLEDGEMENT_MS = 650;
@@ -159,6 +160,7 @@ export function App() {
                 />
                 <SignsSection title="In its favour" tone="positive" items={analysis.verdict.good_signs} />
                 <SignsSection title="Worth watching" tone="negative" items={analysis.verdict.watch_outs} />
+                <SignsSection title="Couldn't verify" tone="neutral" items={analysis.verdict.unverified} />
                 <AlternativesSection approvedExamples={analysis.approved_examples} onViewAll={() => setActivePage("alternatives")} />
                 <HowScoresSection verdict={analysis.verdict} />
               </>
@@ -566,7 +568,7 @@ function ProductHero({
   );
 }
 
-function SignsSection({ title, tone, items }: { title: string; tone: "positive" | "negative"; items: ShopperSignal[] }) {
+function SignsSection({ title, tone, items }: { title: string; tone: SignalTone; items: ShopperSignal[] }) {
   if (items.length === 0) return null;
 
   return (
@@ -959,7 +961,7 @@ type AlternativeItem = {
   thumbnail: string | null;
 };
 
-function SignalIcon({ category, tone }: { category: SignalIconMetric; tone: "positive" | "negative" }) {
+function SignalIcon({ category, tone }: { category: SignalIconMetric; tone: SignalTone }) {
   if (category === "material" || category === "quality") {
     return (
       <svg viewBox="0 0 24 24" role="img" aria-label="Material">
@@ -1004,7 +1006,7 @@ function SignalIcon({ category, tone }: { category: SignalIconMetric; tone: "pos
     );
   }
 
-  if (tone === "negative") {
+  if (tone === "negative" || tone === "neutral") {
     return (
       <svg viewBox="0 0 24 24" role="img" aria-label="Evidence">
         <path d="M6 4h9l3 3v13H6z" />
@@ -1100,6 +1102,7 @@ function DebugPanel({
     evidence_score_effects: verdict?.analysis?.verdict.evidence_score_effects ?? [],
     good_signs: verdict?.analysis?.verdict.good_signs ?? [],
     watch_outs: verdict?.analysis?.verdict.watch_outs ?? [],
+    unverified: verdict?.analysis?.verdict.unverified ?? [],
     extraction,
     classification,
     visual_enrichment: visualEnrichment,

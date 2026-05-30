@@ -242,6 +242,12 @@
   color: var(--warning);
 }
 
+.sign-icon--neutral {
+  border-color: #d8e3e8;
+  background: var(--neutral-muted);
+  color: var(--neutral-score);
+}
+
 .sign-icon svg {
   width: 17px;
   height: 17px;
@@ -1692,6 +1698,18 @@ img {
   background: rgb(146 64 14 / 0.36);
 }
 
+.signal-dot--neutral-high {
+  background: var(--neutral-score);
+}
+
+.signal-dot--neutral-medium {
+  background: rgb(47 111 159 / 0.62);
+}
+
+.signal-dot--neutral-low {
+  background: rgb(47 111 159 / 0.32);
+}
+
 .recommendation-card {
   display: grid;
   grid-template-columns: 56px 1fr;
@@ -2793,6 +2811,12 @@ pre {
   border-color: #ecd9c8;
   background: var(--destructive-muted);
   color: var(--warning);
+}
+
+.sign-icon--neutral {
+  border-color: #d8e3e8;
+  background: var(--neutral-muted);
+  color: var(--neutral-score);
 }
 
 .sign-icon svg {
