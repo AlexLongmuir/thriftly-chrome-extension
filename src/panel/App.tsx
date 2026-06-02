@@ -461,10 +461,37 @@ function LoadingState({
   imageUrl: string | null;
   classification: ProductClassification | null;
 }) {
-  const stepOneState = status === "extracting" ? "active" : "done";
-  const stepTwoState = status === "scoring" ? "done" : status === "sending" ? "active" : "pending";
-  const stepThreeState = status === "scoring" ? "active" : "pending";
   const signalLine = classification ? loadingSignalLine(classification, price) : "Reading product details from this page.";
+  const imageStepBody = imageUrl
+    ? "Looking for visible cues like texture, drape, finish and missing close-ups."
+    : "No useful product image found yet, so image confidence stays lower.";
+  const steps = [
+    {
+      state: status === "extracting" ? "active" : "done",
+      title: "Reading the product page",
+      body: status === "extracting" ? "Finding the title, brand, price and material signals." : signalLine
+    },
+    {
+      state: status === "extracting" ? "pending" : "done",
+      title: "Checking product images",
+      body: imageStepBody
+    },
+    {
+      state: status === "extracting" ? "pending" : "done",
+      title: "Understanding the item",
+      body: "Matching category, material, price and use case."
+    },
+    {
+      state: status === "sending" ? "active" : status === "scoring" ? "done" : "pending",
+      title: "Looking for outside evidence",
+      body: "Checking useful reviews, forums, benchmarks and similar products."
+    },
+    {
+      state: status === "scoring" ? "active" : "pending",
+      title: "Building your verdict",
+      body: "Weighing quality, value, durability, style and confidence."
+    }
+  ] satisfies Array<{ state: "done" | "active" | "pending"; title: string; body: string }>;
 
   return (
     <section className="loading-state">
@@ -478,14 +505,10 @@ function LoadingState({
           {price ? <span>{price}</span> : null}
         </div>
       </div>
-      <div className="loading-title-row">
-        <span className="small-spinner" aria-hidden="true" />
-        <h2>Analysing this item...</h2>
-      </div>
       <div className="tracker-list">
-        <TrackerStep state={stepOneState} number={1} title="Read this page" body={status === "extracting" ? "Extracting category, material and price signals." : signalLine} />
-        <TrackerStep state={stepTwoState} number={2} title="Gathering the evidence" body="Checking reviews, forums and comparable shirts..." />
-        <TrackerStep state={stepThreeState} number={3} title="Scoring & writing the verdict" body="Good signs, watch-outs and a buy call." />
+        {steps.map((step, index) => (
+          <TrackerStep key={step.title} state={step.state} number={index + 1} title={step.title} body={step.body} />
+        ))}
       </div>
       <LoadingSkeleton />
     </section>
