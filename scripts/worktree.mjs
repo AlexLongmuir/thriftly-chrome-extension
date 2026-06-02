@@ -76,7 +76,7 @@ function listWorktrees() {
     const branch = worktree.branch || "(detached)";
     const markers = [];
     if (goneBranches.has(branch)) markers.push("remote gone");
-    if (isMergedIntoMain(branch)) markers.push("merged");
+    if (isCompletedBranch(branch)) markers.push("merged");
     if (!isClean(worktree.path)) markers.push("dirty");
 
     console.log(worktree.path);
@@ -103,7 +103,7 @@ function removeWorktree(args) {
   }
 
   const branch = worktree.branch;
-  const merged = isMergedIntoMain(branch);
+  const merged = isCompletedBranch(branch);
   if (!merged && !options.force) {
     fail(`Branch is not merged into main: ${branch}\nMerge it first, or rerun with --force if you intentionally want to keep/delete it manually.`);
   }
@@ -111,7 +111,7 @@ function removeWorktree(args) {
   runGit(["worktree", "remove", worktree.path, ...(options.force ? ["--force"] : [])]);
 
   if (branch && branch !== "main" && branch !== "master" && branchExists(branch)) {
-    const deleteArgs = merged ? ["branch", "-d", branch] : ["branch", "-D", branch];
+    const deleteArgs = isMergedIntoMain(branch) ? ["branch", "-d", branch] : ["branch", "-D", branch];
     runGit(deleteArgs);
   }
 
@@ -126,7 +126,7 @@ function cleanupWorktrees(args) {
     if (isPrimaryRoot(worktree.path)) return false;
     if (!isManagedWorktreePath(worktree.path)) return false;
     if (!isClean(worktree.path)) return false;
-    return isMergedIntoMain(worktree.branch);
+    return isCompletedBranch(worktree.branch);
   });
 
   if (!candidates.length) {
@@ -146,8 +146,9 @@ function cleanupWorktrees(args) {
 
   for (const worktree of candidates) {
     runGit(["worktree", "remove", worktree.path]);
-    if (worktree.branch && branchExists(worktree.branch) && isMergedIntoMain(worktree.branch)) {
-      runGit(["branch", "-d", worktree.branch]);
+    if (worktree.branch && branchExists(worktree.branch) && isCompletedBranch(worktree.branch)) {
+      const deleteArgs = isMergedIntoMain(worktree.branch) ? ["branch", "-d", worktree.branch] : ["branch", "-D", worktree.branch];
+      runGit(deleteArgs);
     }
     console.log(`Removed ${worktree.branch} -> ${worktree.path}`);
   }
@@ -282,6 +283,27 @@ function isMergedIntoMain(branch) {
   if (!branch || branch === "main" || branch === "master") return true;
   const mainRef = preferredMainRef();
   return isAncestor(branch, mainRef);
+}
+
+function isCompletedBranch(branch) {
+  if (!branch || branch === "main" || branch === "master") return true;
+  return isMergedIntoMain(branch) || isMergedPullRequestBranch(branch);
+}
+
+function isMergedPullRequestBranch(branch) {
+  const result = spawnSync("gh", ["pr", "view", branch, "--json", "state,mergedAt"], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (result.status !== 0) return false;
+
+  try {
+    const parsed = JSON.parse(result.stdout);
+    return parsed.state === "MERGED" || Boolean(parsed.mergedAt);
+  } catch {
+    return false;
+  }
 }
 
 function isAncestor(ancestor, descendant, cwd = process.cwd()) {
