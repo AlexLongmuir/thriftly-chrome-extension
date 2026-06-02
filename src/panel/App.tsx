@@ -346,8 +346,8 @@ function SampleAnalysisCard() {
       </div>
       <div className="sample-score-row">
         <div className={`sample-grade grade-tile--${tone}`}>
-          <strong>{gradeFor(SAMPLE_ANALYSIS.overall_rating)}</strong>
-          <span>{score}/100</span>
+          <strong>{score}</strong>
+          <span>/100</span>
         </div>
         <div className="sample-verdict-copy">
           <span className={`recommendation-tag recommendation-tag--${SAMPLE_ANALYSIS.recommendation}`}>
@@ -580,8 +580,10 @@ function ProductHero({
       <div className="result-divider" />
       <div className="rating-row">
         <div className="grade-tile">
-          <div className="grade-letter">{gradeFor(verdict.overall_rating)}</div>
-          <div className="grade-score">{score}<small>/100</small></div>
+          <div className="grade-score">
+            <strong>{score}</strong>
+            <small>/100</small>
+          </div>
         </div>
         <div className="rating-right">
           <span className={`recommendation-tag recommendation-tag--${verdict.recommendation}`}>{recommendationLabel(verdict.recommendation)}</span>
