@@ -45,6 +45,44 @@ describe("quality-check API", () => {
     ).rejects.toThrow("OPENAI_API_KEY is not configured; Stage 6 core analysis is unavailable.");
   });
 
+  it("errors instead of returning fallback results when OpenAI output is unusable", async () => {
+    await expect(
+      handleQualityCheckPayload(createPayload({ imageUrls: [] }), {
+        env: testEnv(),
+        requestId: () => "bad-openai-output",
+        fetcher: async (input) => {
+          expect(String(input)).toBe("https://api.openai.com/v1/responses");
+          return Response.json({ output_text: JSON.stringify({ recommendation: "buy" }) });
+        }
+      })
+    ).rejects.toThrow("OpenAI verdict response was missing scores.");
+  });
+
+  it("sends approved examples as context without deterministic baseline or score guardrails", async () => {
+    await handleQualityCheckPayload(createPayload({ imageUrls: [] }), {
+      env: testEnv(),
+      requestId: () => "ai-primary-input",
+      fetcher: async (input, init) => {
+        expect(String(input)).toBe("https://api.openai.com/v1/responses");
+        const body = JSON.parse(String(init?.body)) as { input: string };
+        const modelInput = JSON.parse(body.input) as Record<string, unknown>;
+
+        expect(modelInput.matched_approved_examples).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              id: "approved_merino_knit_mid_premium_001"
+            })
+          ])
+        );
+        expect(modelInput).not.toHaveProperty("deterministic_baseline");
+        expect(modelInput).not.toHaveProperty("score_guardrails");
+        expect(modelInput).not.toHaveProperty("required_variance_tolerance");
+
+        return mockOpenAIVerdictResponse();
+      }
+    });
+  });
+
   it("prevents image-only model claims about fabric quality, construction, authenticity, or durability", async () => {
     const result = await handleQualityCheckPayload(createPayload({ imageUrls: ["https://cdn.example.com/product.png"] }), {
       env: testEnv(),
@@ -468,7 +506,7 @@ describe("quality-check API", () => {
     });
   });
 
-  it("keeps Stage 6 deterministic across repeat runs", async () => {
+  it("keeps repeated Stage 6 model responses stable across repeat runs", async () => {
     const payload = createPayload({ imageUrls: [] });
     const results = await Promise.all([
       handleQualityCheckPayload(payload, { env: testEnv(), requestId: () => "run-1" }),
@@ -745,7 +783,7 @@ describe("quality-check API", () => {
     expectShopperSignalTitles(result.analysis?.verdict.unverified ?? []);
   });
 
-  it("caps weak source data and returns not_enough_info instead of strong claims", async () => {
+  it("downgrades overconfident model output for weak source data", async () => {
     const payload = createPayload({ imageUrls: [] });
     payload.page.product.sourceConfidenceScore = 0.28;
     payload.page.product.source_confidence_score = 0.28;
@@ -765,13 +803,13 @@ describe("quality-check API", () => {
       fetcher: async (input) => {
         expect(String(input)).toBe("https://api.openai.com/v1/responses");
         return mockOpenAIVerdictResponse({
-          recommendation: "not_enough_info",
+          recommendation: "strong_buy",
           scores: {
             quality: 3.8,
             value: 3.8,
             durability: 3.8,
             aesthetic: 4.5,
-            confidence: 0.28
+            confidence: 1
           },
           verdicts: {
             quality: { verdict: "Material composition was not found, so quality cannot be judged strongly.", confidence: "low", evidence_type: "unknown" },
@@ -812,7 +850,7 @@ describe("quality-check API", () => {
     expect(result.analysis?.verdict.overall_rating).toBeLessThanOrEqual(5.2);
   });
 
-  it("uses GPT-5.4-mini verdict output but clamps scores and confidence to Stage 6 guardrails", async () => {
+  it("uses GPT-5.4-mini verdict scores without deterministic score clamping", async () => {
     const result = await handleQualityCheckPayload(createPayload({ imageUrls: [] }), {
       env: testEnv({ OPENAI_API_KEY: "test-openai-key" }),
       requestId: () => "model-clamped",
@@ -860,15 +898,15 @@ describe("quality-check API", () => {
       model_status: "model_completed",
       model: "gpt-5.4-mini",
       scores: {
-        quality: 8.5,
-        value: 8,
-        durability: 7.6,
-        aesthetic: 8.8,
+        quality: 10,
+        value: 10,
+        durability: 10,
+        aesthetic: 10,
         confidence: 0.86
       },
       matched_examples: expect.arrayContaining(["approved_merino_knit_mid_premium_001"])
     });
-    expect(result.analysis?.verdict.overall_rating).toBe(8.2);
+    expect(result.analysis?.verdict.overall_rating).toBe(9.9);
   });
 
   it("creates a traceable public evidence pack and lifts Kamakura WQGS04 above the old under-score", async () => {
@@ -926,7 +964,8 @@ describe("quality-check API", () => {
               evidence_type: "durability",
               confidence: "medium"
             }
-          ]
+          ],
+          evidence_score_effects: ["positive quality: exact-product evidence says the cotton oxford fabric feels substantial"]
         });
         expect(String(input)).toBe("https://api.openai.com/v1/responses");
         return Response.json({
