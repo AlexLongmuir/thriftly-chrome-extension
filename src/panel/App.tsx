@@ -210,10 +210,24 @@ function AnalysisActionBar({
 }) {
   return (
     <div className="analysis-action-bar">
+      <div className="analysis-brand">Scouted</div>
       <button className="refresh-button" type="button" onClick={onRefresh} disabled={disabled}>
-        Analyse current page
+        <ScanIcon />
+        <span>Analyse This Item</span>
       </button>
     </div>
+  );
+}
+
+function ScanIcon() {
+  return (
+    <svg className="scan-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+      <path d="M4 7V5.8C4 4.8 4.8 4 5.8 4H7" />
+      <path d="M13 4h1.2C15.2 4 16 4.8 16 5.8V7" />
+      <path d="M16 13v1.2c0 1-.8 1.8-1.8 1.8H13" />
+      <path d="M7 16H5.8C4.8 16 4 15.2 4 14.2V13" />
+      <path d="M6.5 10h7" />
+    </svg>
   );
 }
 
