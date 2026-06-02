@@ -146,19 +146,19 @@ type EvidencePack = {
 };
 
 const APPROVED_EXAMPLES: MatchedApprovedExample[] = [
-  example("approved_merino_knit_mid_premium_001", "knitwear", "wool", "mid-premium", "£80-£150", [7.8, 7.8, 7.0, 7.5, 0.86], "buy", "COS", "Pure Cashmere Jumper", "£135", "https://www.cos.com/"),
-  example("approved_cashmere_knit_luxury_001", "knitwear", "wool", "luxury", "£600+", [8.8, 4.8, 6.8, 8.7, 0.84], "overpriced", "Mr Porter", "Cashmere Sweater", "£695", "https://www.mrporter.com/"),
+  example("approved_merino_knit_mid_premium_001", "knitwear", "wool", "mid-premium", "£80-£150", [7.8, 7.8, 7.0, 7.5, 0.86], "worth_buying", "COS", "Pure Cashmere Jumper", "£135", "https://www.cos.com/"),
+  example("approved_cashmere_knit_luxury_001", "knitwear", "wool", "luxury", "£600+", [8.8, 4.8, 6.8, 8.7, 0.84], "poor_value", "Mr Porter", "Cashmere Sweater", "£695", "https://www.mrporter.com/"),
   example("approved_wool_blend_knit_high_street_001", "knitwear", "blend", "high-street", "£40-£90", [6.4, 6.8, 6.0, 6.5, 0.78], "consider", "ARKET", "Wool Blend Jumper", "£77", "https://www.arket.com/"),
-  example("approved_acrylic_knit_budget_001", "knitwear", "synthetic", "budget", "under £40", [4.4, 5.4, 4.8, 5.2, 0.74], "reconsider", "H&M", "Rib-Knit Jumper", "£24.99", "https://www2.hm.com/"),
-  example("approved_linen_shirt_mid_premium_001", "shirt", "linen", "mid-premium", "£60-£120", [7.2, 7.1, 6.6, 7.4, 0.82], "buy", "ARKET", "Relaxed Linen Shirt", "£67", "https://www.arket.com/"),
+  example("approved_acrylic_knit_budget_001", "knitwear", "synthetic", "budget", "under £40", [4.4, 5.4, 4.8, 5.2, 0.74], "skip", "H&M", "Rib-Knit Jumper", "£24.99", "https://www2.hm.com/"),
+  example("approved_linen_shirt_mid_premium_001", "shirt", "linen", "mid-premium", "£60-£120", [7.2, 7.1, 6.6, 7.4, 0.82], "worth_buying", "ARKET", "Relaxed Linen Shirt", "£67", "https://www.arket.com/"),
   example("approved_cotton_linen_shirt_high_street_001", "shirt", "blend", "high-street", "£30-£70", [6.4, 7.0, 6.2, 6.6, 0.78], "consider", "Zara", "Cotton-Linen Shirt", "£45.99", "https://www.zara.com/"),
   example("approved_cotton_shirt_budget_001", "shirt", "cotton", "budget", "under £30", [5.4, 6.2, 5.6, 5.4, 0.76], "consider", "Uniqlo", "Oxford Shirt", "£29.90", "https://www.uniqlo.com/"),
-  example("approved_synthetic_shirt_high_street_001", "shirt", "synthetic", "high-street", "£30-£60", [4.8, 4.8, 5.0, 5.8, 0.72], "reconsider", "Mango", "Regular-Fit Shirt", "£35.99", "https://shop.mango.com/"),
+  example("approved_synthetic_shirt_high_street_001", "shirt", "synthetic", "high-street", "£30-£60", [4.8, 4.8, 5.0, 5.8, 0.72], "skip", "Mango", "Regular-Fit Shirt", "£35.99", "https://shop.mango.com/"),
   example("approved_leather_trainers_high_street_001", "footwear", "leather", "high-street", "£40-£90", [6.4, 7.0, 6.3, 6.2, 0.78], "consider", "M&S", "Leather Lace-Up Trainers", "£49.50", "https://www.marksandspencer.com/"),
   example("approved_leather_trainers_premium_001", "footwear", "leather", "premium", "£100-£220", [7.4, 6.3, 7.0, 7.1, 0.8], "consider", "Veja", "Campo Leather Trainers", "£130", "https://www.veja-store.com/"),
-  example("approved_synthetic_trainers_budget_001", "footwear", "synthetic", "budget", "under £50", [4.8, 5.5, 4.9, 5.5, 0.7], "reconsider", "H&M", "Canvas Trainers", "£24.99", "https://www2.hm.com/"),
+  example("approved_synthetic_trainers_budget_001", "footwear", "synthetic", "budget", "under £50", [4.8, 5.5, 4.9, 5.5, 0.7], "skip", "H&M", "Canvas Trainers", "£24.99", "https://www2.hm.com/"),
   example("approved_leather_jacket_premium_001", "outerwear", "leather", "premium", "£250-£600", [7.5, 6.4, 7.2, 7.8, 0.78], "consider", "AllSaints", "Miller Leather Jacket", "£349", "https://www.allsaints.com/"),
-  example("approved_leather_jacket_luxury_001", "outerwear", "leather", "luxury", "£1200+", [8.2, 4.2, 7.4, 8.6, 0.72], "overpriced", "Celine", "Leather Biker Jacket", "£3,200", "https://www.celine.com/"),
+  example("approved_leather_jacket_luxury_001", "outerwear", "leather", "luxury", "£1200+", [8.2, 4.2, 7.4, 8.6, 0.72], "poor_value", "Celine", "Leather Biker Jacket", "£3,200", "https://www.celine.com/"),
   example("approved_poly_fleece_premium_001", "outerwear", "synthetic", "premium", "£80-£150", [6.8, 7.0, 7.2, 6.1, 0.82], "consider", "Patagonia", "Micro D Fleece Jacket", "£80", "https://www.patagonia.com/"),
   example("approved_recycled_fleece_premium_001", "outerwear", "synthetic", "premium", "£120-£220", [7.0, 6.6, 7.3, 6.6, 0.82], "consider", "Patagonia", "Better Sweater Jacket", "£130", "https://www.patagonia.com/"),
   example("approved_blazer_high_street_001", "outerwear", "blend", "high-street", "£50-£120", [5.8, 6.1, 5.7, 6.3, 0.74], "consider", "Next", "Textured Blazer", "£74", "https://www.next.co.uk/"),
@@ -166,16 +166,16 @@ const APPROVED_EXAMPLES: MatchedApprovedExample[] = [
   example("approved_denim_premium_001", "denim", "cotton", "premium", "£120-£250", [7.4, 6.0, 7.2, 7.0, 0.82], "consider", "A.P.C.", "Petit Standard Jeans", "£190", "https://www.apcstore.com/"),
   example("approved_tshirt_cotton_budget_001", "t-shirt", "cotton", "budget", "under £20", [5.2, 6.5, 5.0, 5.2, 0.78], "consider", "Uniqlo", "Supima Cotton T-Shirt", "£14.90", "https://www.uniqlo.com/"),
   example("approved_tshirt_premium_cotton_001", "t-shirt", "cotton", "premium", "£40-£90", [6.8, 5.4, 6.2, 6.8, 0.8], "consider", "Sunspel", "Classic Cotton T-Shirt", "£75", "https://www.sunspel.com/"),
-  example("approved_trousers_wool_mid_premium_001", "trousers", "wool", "mid-premium", "£90-£180", [7.4, 6.8, 7.0, 7.2, 0.8], "buy", "COS", "Tailored Wool Trousers", "£135", "https://www.cos.com/"),
+  example("approved_trousers_wool_mid_premium_001", "trousers", "wool", "mid-premium", "£90-£180", [7.4, 6.8, 7.0, 7.2, 0.8], "worth_buying", "COS", "Tailored Wool Trousers", "£135", "https://www.cos.com/"),
   example("approved_trousers_synthetic_high_street_001", "trousers", "synthetic", "high-street", "£30-£80", [5.4, 6.0, 5.7, 5.9, 0.76], "consider", "Zara", "Technical Trousers", "£45.99", "https://www.zara.com/"),
   example("approved_bag_leather_premium_001", "bag", "leather", "premium", "£180-£450", [7.6, 6.4, 7.6, 7.5, 0.78], "consider", "Coach", "Leather Tote Bag", "£295", "https://uk.coach.com/"),
-  example("approved_bag_synthetic_budget_001", "bag", "synthetic", "budget", "under £50", [4.8, 5.8, 5.0, 5.2, 0.72], "reconsider", "H&M", "Shopper Bag", "£19.99", "https://www2.hm.com/"),
+  example("approved_bag_synthetic_budget_001", "bag", "synthetic", "budget", "under £50", [4.8, 5.8, 5.0, 5.2, 0.72], "skip", "H&M", "Shopper Bag", "£19.99", "https://www2.hm.com/"),
   example("approved_dress_viscose_high_street_001", "dress", "viscose", "high-street", "£40-£100", [5.8, 6.4, 5.4, 6.8, 0.76], "consider", "Mango", "Viscose Shirt Dress", "£59.99", "https://shop.mango.com/"),
   example("approved_dress_silk_premium_001", "dress", "silk", "premium", "£180-£450", [7.8, 6.3, 6.2, 8.0, 0.78], "consider", "Reformation", "Silk Dress", "£278", "https://www.thereformation.com/"),
   example("approved_skirt_wool_mid_premium_001", "skirt", "wool", "mid-premium", "£80-£180", [7.2, 6.7, 6.8, 7.2, 0.78], "consider", "ARKET", "Wool A-Line Skirt", "£119", "https://www.arket.com/"),
   example("approved_activewear_synthetic_premium_001", "activewear", "synthetic", "premium", "£60-£150", [6.8, 6.7, 7.4, 6.2, 0.8], "consider", "Patagonia", "Performance Joggers", "£85", "https://www.patagonia.com/"),
   example("approved_accessory_leather_high_street_001", "accessory", "leather", "high-street", "£20-£80", [6.0, 6.8, 6.1, 6.0, 0.76], "consider", "M&S", "Leather Belt", "£25", "https://www.marksandspencer.com/"),
-  example("approved_unknown_thin_page_001", "other", "unknown", "unknown", "unknown", [2.8, 2.8, 2.8, 2.8, 0.2], "not_enough_info", "", "", "", "")
+  example("approved_unknown_thin_page_001", "other", "unknown", "unknown", "unknown", [2.8, 2.8, 2.8, 2.8, 0.2], "cant_assess", "", "", "", "")
 ];
 
 export default async function handler(req: IncomingMessage, res: ServerResponse) {
@@ -390,10 +390,7 @@ function normaliseAiStage6Verdict(candidate: Partial<Stage6Verdict>, context: St
     confidence: confidenceSafeScore(requiredScore(candidate.scores?.confidence, "confidence", 1), context)
   };
   const overall = deriveOverall(scores);
-  const recommendation =
-    scores.confidence < 0.45 || context.payload.page.product.page_state !== "product_page" || context.payload.classification.material_family === "unknown"
-      ? "not_enough_info"
-      : requiredRecommendation(candidate.recommendation);
+  const recommendation = recommendationForEvidenceGate(context, scores) || safeRecommendationForConfidence(requiredRecommendation(candidate.recommendation), scores, context);
   const confidenceLabel = verdictConfidence(scores.confidence);
 
   const baseVerdict: Stage6Verdict = {
@@ -430,10 +427,58 @@ function requiredScore(value: unknown, field: keyof VerdictScores, max: number):
 }
 
 function confidenceSafeScore(modelConfidence: number, context: Stage6Context): number {
+  return round2(modelConfidence);
+}
+
+function recommendationForEvidenceGate(context: Stage6Context, scores: VerdictScores): Recommendation | null {
   const product = context.payload.page.product;
   const classification = context.payload.classification;
-  const cap = externalCoverageConfidenceCap(confidenceCap(product.page_state, classification.source_confidence_score), context.evidencePack);
-  return round2(Math.min(modelConfidence, cap));
+  const hasReliableCoreFact = Boolean(
+    product.fields.title.value ||
+      product.fields.brand.value ||
+      product.fields.price.value ||
+      product.fields.materials.value ||
+      product.fields.description.value
+  );
+
+  if (product.page_state !== "product_page") return "cant_assess";
+  if (scores.confidence < 0.25 || classification.source_confidence_score < 0.25) return "cant_assess";
+  if (!hasReliableCoreFact && classification.material_family === "unknown") return "cant_assess";
+  return null;
+}
+
+function safeRecommendationForConfidence(recommendation: Recommendation, scores: VerdictScores, context: Stage6Context): Recommendation {
+  if (recommendation === "excellent_pick" && scores.confidence < 0.45) {
+    return hasMaterialDecisionGaps(context) ? "consider" : "worth_buying";
+  }
+  if (recommendation === "worth_buying" && scores.confidence < 0.45 && hasMaterialDecisionGaps(context)) {
+    return "consider";
+  }
+  if ((recommendation === "poor_value" || recommendation === "skip" || recommendation === "avoid") && !hasEvidenceBackedNegativeJudgement(recommendation, scores, context)) {
+    return "consider";
+  }
+  return recommendation;
+}
+
+function hasMaterialDecisionGaps(context: Stage6Context): boolean {
+  const product = context.payload.page.product;
+  return Boolean(
+    !product.fields.materials.value ||
+      !product.fields.construction.value ||
+      !product.fields.care.value ||
+      context.evidencePack.evidenceGaps.length >= 2 ||
+      context.visual.status === "skipped"
+  );
+}
+
+function hasEvidenceBackedNegativeJudgement(recommendation: Recommendation, scores: VerdictScores, context: Stage6Context): boolean {
+  const negativeEvidence = [...context.evidencePack.externalEvidence, ...context.evidencePack.benchmarkEvidence].some((item) => item.sentiment === "negative" || item.sentiment === "mixed");
+  const concerns = context.payload.classification.quality_concerns.length > 0 || context.evidencePack.conflictingEvidence.length > 0;
+  const valueConcern = scores.value < 5.8 || syntheticPriceLooksHigh(context.payload.classification);
+  if (recommendation === "poor_value") return valueConcern;
+  if (recommendation === "skip") return scores.quality < 5.5 || scores.value < 5.5 || scores.durability < 5.5 || concerns || negativeEvidence;
+  if (recommendation === "avoid") return scores.quality < 4.5 || scores.value < 4.5 || scores.durability < 4.5 || negativeEvidence;
+  return true;
 }
 
 function requiredRecommendation(value: unknown): Recommendation {
@@ -1915,17 +1960,6 @@ function classifyExternalCoverage(
   return "limited";
 }
 
-function externalCoverageConfidenceCap(confidence: number, evidencePack: EvidencePack): number {
-  if (!evidencePack.externalSearchAttempted) return confidence;
-  const cap = {
-    none: 0.62,
-    limited: 0.72,
-    moderate: 0.84,
-    strong: 0.92
-  }[evidencePack.externalCoverage];
-  return round2(Math.min(confidence, cap));
-}
-
 function dedupePublicEvidence(items: PublicEvidenceItem[]): PublicEvidenceItem[] {
   const seen = new Set<string>();
   const result: PublicEvidenceItem[] = [];
@@ -1986,16 +2020,9 @@ function similarityScore(classification: ProductClassification, exampleItem: Mat
   return round2(Math.min(0.98, score + 0.1));
 }
 
-function confidenceCap(pageState: BackendPayload["page"]["product"]["page_state"], score: number): number {
-  if (pageState !== "product_page") return Math.min(score, 0.24);
-  if (score < 0.45) return Math.min(score, 0.44);
-  return Math.min(0.92, score);
-}
-
 function deriveOverall(scores: VerdictScores): number {
   const raw = scores.quality * 0.32 + scores.value * 0.28 + scores.durability * 0.2 + scores.aesthetic * 0.14 + scores.confidence * 10 * 0.06;
-  const capped = scores.confidence < 0.45 ? Math.min(raw, 5.2) : raw;
-  return round1(capped);
+  return round1(raw);
 }
 
 function buildReasoningFlags(context: Stage6Context): string[] {
@@ -2043,7 +2070,15 @@ function buildStage6Instructions(): string {
     "Use external_evidence only for sources outside the current retailer domain. Exact-product outside evidence can move scores more than brand-reputation evidence.",
     "Use key_external_insights and repeated_themes as the synthesized shopper evidence layer. These should influence confidence/risk flags when Reddit/forum patterns repeat, and value expectations when editorial/category benchmarks define criteria.",
     "Use benchmark_evidence only for comparable products, price bands, or category norms; never treat benchmark/general sources as exact-product proof. Make score changes traceable in evidence_score_effects.",
-    "Weak source data must lower confidence and can return not_enough_info. Explain limitations directly instead of adapting to a hidden baseline."
+    "Use recommendation values only from: excellent_pick, worth_buying, consider, poor_value, skip, avoid, cant_assess.",
+    "Use excellent_pick only for a very strong rating/value with no major watch-outs and medium/high confidence.",
+    "Use worth_buying for a good item with manageable trade-offs.",
+    "Use consider for promising but mixed items, or good-looking items with low confidence or meaningful missing evidence.",
+    "Use poor_value when quality may be acceptable but price/value is the main issue.",
+    "Use skip for a weak overall purchase case without severe red flags.",
+    "Use avoid only for clear evidence-backed red flags.",
+    "Use cant_assess only when the system cannot make a responsible judgement. Missing one field should usually become unverified, not cant_assess.",
+    "Weak source data must lower confidence and may require cant_assess. Explain limitations directly instead of adapting to a hidden baseline."
   ].join("\n");
 }
 
@@ -2109,7 +2144,7 @@ function stage6ResponseSchema() {
     required: ["overall_rating", "recommendation", "recommendation_summary", "scores", "confidence_label", "good_signs", "watch_outs", "unverified", "verdicts", "reasoning_flags", "matched_examples", "evidence_score_effects", "summary"],
     properties: {
       overall_rating: { type: "number", minimum: 0, maximum: 10 },
-      recommendation: { enum: ["strong_buy", "buy", "consider", "reconsider", "overpriced", "avoid", "not_enough_info"] },
+      recommendation: { enum: ["excellent_pick", "worth_buying", "consider", "poor_value", "skip", "avoid", "cant_assess"] },
       recommendation_summary: { type: "string" },
       scores: { type: "object", additionalProperties: false, required: Object.keys(scoreProperties), properties: scoreProperties },
       confidence_label: { enum: ["high", "medium", "low"] },
@@ -2420,13 +2455,13 @@ function numberOr(value: unknown, fallback: number): number {
 
 function isRecommendation(value: unknown): value is Recommendation {
   return (
-    value === "strong_buy" ||
-    value === "buy" ||
+    value === "excellent_pick" ||
+    value === "worth_buying" ||
     value === "consider" ||
-    value === "reconsider" ||
-    value === "overpriced" ||
+    value === "poor_value" ||
+    value === "skip" ||
     value === "avoid" ||
-    value === "not_enough_info"
+    value === "cant_assess"
   );
 }
 

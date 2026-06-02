@@ -1562,8 +1562,8 @@ img {
   font-weight: 850;
 }
 
-.recommendation-tag--strong_buy,
-.recommendation-tag--buy {
+.recommendation-tag--excellent_pick,
+.recommendation-tag--worth_buying {
   background: var(--success-muted);
   color: var(--success);
 }
@@ -1573,14 +1573,14 @@ img {
   color: var(--neutral-score);
 }
 
-.recommendation-tag--reconsider,
-.recommendation-tag--overpriced {
+.recommendation-tag--skip,
+.recommendation-tag--poor_value {
   background: var(--warning-muted);
   color: var(--warning);
 }
 
 .recommendation-tag--avoid,
-.recommendation-tag--not_enough_info {
+.recommendation-tag--cant_assess {
   background: var(--destructive-muted);
   color: var(--destructive);
 }

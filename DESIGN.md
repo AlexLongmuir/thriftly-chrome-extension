@@ -235,7 +235,7 @@ Rules:
 
 ### Recommendation Pill
 
-Use a small rounded pill for recommendation labels such as buy, consider, reconsider, overpriced, avoid, or not enough info.
+Use a small rounded pill for recommendation labels such as excellent pick, worth buying, consider, poor value, skip, avoid, or can’t assess.
 
 Rules:
 

@@ -1241,8 +1241,10 @@ function toTitleCase(value: string): string {
 }
 
 function recommendationLabel(recommendation: Recommendation): string {
-  if (recommendation === "strong_buy" || recommendation === "buy") return "Buy";
-  if (recommendation === "not_enough_info") return "Not enough info";
+  if (recommendation === "excellent_pick") return "Excellent pick";
+  if (recommendation === "worth_buying") return "Worth buying";
+  if (recommendation === "poor_value") return "Poor value";
+  if (recommendation === "cant_assess") return "Can’t assess";
   return toTitleCase(formatLabel(recommendation));
 }
 

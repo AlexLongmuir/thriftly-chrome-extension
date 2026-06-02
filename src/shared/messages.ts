@@ -392,13 +392,13 @@ export type VerdictEvidenceType =
   | "unknown";
 
 export type Recommendation =
-  | "strong_buy"
-  | "buy"
+  | "excellent_pick"
+  | "worth_buying"
   | "consider"
-  | "reconsider"
-  | "overpriced"
+  | "poor_value"
+  | "skip"
   | "avoid"
-  | "not_enough_info";
+  | "cant_assess";
 
 export type VerdictConfidence = "high" | "medium" | "low";
 
