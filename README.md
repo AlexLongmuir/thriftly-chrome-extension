@@ -34,6 +34,34 @@ Build the unpacked extension:
 npm run build
 ```
 
+## Parallel worktrees
+
+Keep the saved project folder as the stable control room. Create a fresh worktree for each feature or fix:
+
+```bash
+npm run chat:new -- loading-steps
+cd /Users/alex/Documents/scouted-worktrees/loading-steps
+```
+
+Useful commands:
+
+```bash
+npm run chat:list
+npm run chat:done -- loading-steps
+npm run chat:cleanup
+npm run hooks:install
+```
+
+`chat:new` creates `codex/<task-name>` from `origin/main` under `/Users/alex/Documents/scouted-worktrees/` and links `.env.local` when available. `chat:done` removes a clean, merged worktree. `chat:cleanup` does a dry run for clean merged worktrees; add `-- --apply` to remove them.
+
+Install the pre-commit guard once per clone:
+
+```bash
+npm run hooks:install
+```
+
+The guard blocks commits from stale branches, direct `main` commits, commits from the primary project folder on a feature branch, and files that have both staged and unstaged changes.
+
 ## Local backend setup
 
 Create `.env.local` from `.env.example`:
