@@ -58,29 +58,118 @@ describe("quality-check API", () => {
     ).rejects.toThrow("OpenAI verdict response was missing scores.");
   });
 
-  it("sends approved examples as context without deterministic baseline or score guardrails", async () => {
+  it("sends approved examples as calibration context without deterministic baseline scoring", async () => {
     await handleQualityCheckPayload(createPayload({ imageUrls: [] }), {
       env: testEnv(),
       requestId: () => "ai-primary-input",
       fetcher: async (input, init) => {
         expect(String(input)).toBe("https://api.openai.com/v1/responses");
-        const body = JSON.parse(String(init?.body)) as { input: string };
+        const body = JSON.parse(String(init?.body)) as { input: string; instructions: string };
         const modelInput = JSON.parse(body.input) as Record<string, unknown>;
 
         expect(modelInput.matched_approved_examples).toEqual(
           expect.arrayContaining([
             expect.objectContaining({
-              id: "approved_merino_knit_mid_premium_001"
+              id: "approved_merino_knit_mid_premium_001",
+              expected_scores: expect.objectContaining({
+                value: 8.8
+              })
             })
           ])
         );
+        expect(body.instructions).toContain("matched_approved_examples are calibration references");
+        expect(body.instructions).toContain("Do not default to 6.0-7.0");
         expect(modelInput).not.toHaveProperty("deterministic_baseline");
-        expect(modelInput).not.toHaveProperty("score_guardrails");
-        expect(modelInput).not.toHaveProperty("required_variance_tolerance");
 
         return mockOpenAIVerdictResponse();
       }
     });
+  });
+
+  it("runs visual enrichment and external evidence in parallel while preserving final verdict inputs", async () => {
+    const startedAt = performance.now();
+    const result = await handleQualityCheckPayload(createPayload({ imageUrls: ["https://cdn.example.com/product.png"] }), {
+      env: testEnv({ QUALITY_CHECK_PUBLIC_EVIDENCE_SEARCH: "enabled" }),
+      requestId: () => "parallel-backend",
+      fetcher: async (input, init) => {
+        const url = String(input);
+
+        if (url === "https://cdn.example.com/product.png") {
+          await delay(20);
+          return new Response(new Uint8Array([1, 2, 3]), { headers: { "content-type": "image/png" } });
+        }
+
+        if (url.startsWith("https://generativelanguage.googleapis.com/")) {
+          await delay(120);
+          return mockGeminiVisionResponse();
+        }
+
+        if (url === "https://api.openai.com/v1/responses" && isStage6Request(init)) {
+          const body = JSON.parse(String(init?.body)) as { input: string };
+          const modelInput = JSON.parse(body.input) as {
+            visual_enrichment?: { visual_cues?: unknown[] };
+            external_evidence?: unknown[];
+          };
+
+          expect(modelInput.visual_enrichment?.visual_cues).toEqual(
+            expect.arrayContaining([expect.objectContaining({ cue: expect.stringContaining("knit surface") })])
+          );
+          expect(modelInput.external_evidence).toEqual(
+            expect.arrayContaining([expect.objectContaining({ source_domain: "reddit.com" })])
+          );
+
+          return mockOpenAIVerdictResponse();
+        }
+
+        if (url === "https://api.openai.com/v1/responses") {
+          await delay(120);
+          return mockEvidenceAgentResponse();
+        }
+
+        return new Response("Unhandled test fetch", { status: 500 });
+      }
+    });
+    const elapsed = performance.now() - startedAt;
+
+    expect(elapsed).toBeLessThan(230);
+    expect(result.analysis?.external_evidence).toEqual(
+      expect.arrayContaining([expect.objectContaining({ source_domain: "reddit.com" })])
+    );
+    expect(result.analysis?.visual_enrichment.visual_cues).toEqual(
+      expect.arrayContaining([expect.objectContaining({ cue: expect.stringContaining("knit surface") })])
+    );
+  });
+
+  it("returns non-negative backend timing diagnostics", async () => {
+    const result = await handleQualityCheckPayload(createPayload({ imageUrls: ["https://cdn.example.com/product.png"] }), {
+      env: testEnv({ QUALITY_CHECK_PUBLIC_EVIDENCE_SEARCH: "enabled" }),
+      requestId: () => "timed-backend",
+      fetcher: async (input, init) => {
+        const url = String(input);
+        if (url === "https://cdn.example.com/product.png") {
+          return new Response(new Uint8Array([1, 2, 3]), { headers: { "content-type": "image/png" } });
+        }
+        if (url.startsWith("https://generativelanguage.googleapis.com/")) return mockGeminiVisionResponse();
+        if (url === "https://api.openai.com/v1/responses" && isStage6Request(init)) return mockOpenAIVerdictResponse();
+        if (url === "https://api.openai.com/v1/responses") return mockEvidenceAgentResponse();
+        return new Response("Unhandled test fetch", { status: 500 });
+      }
+    });
+
+    expect(result.analysis?.timings_ms).toEqual(
+      expect.objectContaining({
+        total_backend: expect.any(Number),
+        visual_enrichment: expect.any(Number),
+        external_evidence: expect.any(Number),
+        stage6_verdict: expect.any(Number),
+        image_download: expect.any(Number),
+        gemini_vision: expect.any(Number),
+        ai_evidence_agent: expect.any(Number)
+      })
+    );
+    for (const value of Object.values(result.analysis?.timings_ms ?? {})) {
+      expect(value).toBeGreaterThanOrEqual(0);
+    }
   });
 
   it("prevents image-only model claims about fabric quality, construction, authenticity, or durability", async () => {
@@ -979,6 +1068,176 @@ describe("quality-check API", () => {
     expect(result.analysis?.verdict.recommendation).toBe("poor_value");
   });
 
+  it("normalises premium-priced synthetic shirts away from middling positive recommendations", async () => {
+    const payload = createPayload({ imageUrls: [] });
+    payload.page.product.fields.title = field("Premium Synthetic Shirt");
+    payload.page.product.fields.price = field("95");
+    payload.page.product.fields.materials = field("100% polyester");
+    payload.classification = {
+      ...payload.classification,
+      category: "shirt",
+      material_family: "synthetic",
+      price: "£95",
+      material_description: "100% polyester.",
+      quality_signals: [],
+      quality_concerns: ["synthetic-heavy fabric may feel less breathable"]
+    };
+
+    const result = await handleQualityCheckPayload(payload, {
+      env: testEnv(),
+      requestId: () => "synthetic-premium-band",
+      fetcher: async (input) => {
+        expect(String(input)).toBe("https://api.openai.com/v1/responses");
+        return mockOpenAIVerdictResponse({
+          recommendation: "consider",
+          scores: {
+            quality: 5.9,
+            value: 4.6,
+            durability: 5.0,
+            aesthetic: 6.0,
+            confidence: 0.76
+          }
+        });
+      }
+    });
+
+    expect(result.analysis?.verdict.overall_rating).toBeLessThan(6);
+    expect(result.analysis?.verdict.recommendation).toBe("poor_value");
+  });
+
+  it("allows strong everyday natural-fibre items into the 80s instead of leaving them at consider", async () => {
+    const result = await handleQualityCheckPayload(createPayload({ imageUrls: [] }), {
+      env: testEnv(),
+      requestId: () => "strong-natural-fibre-band",
+      fetcher: async (input) => {
+        expect(String(input)).toBe("https://api.openai.com/v1/responses");
+        return mockOpenAIVerdictResponse({
+          recommendation: "consider",
+          scores: {
+            quality: 8.4,
+            value: 8.6,
+            durability: 7.6,
+            aesthetic: 8.1,
+            confidence: 0.78
+          }
+        });
+      }
+    });
+
+    expect(result.analysis?.verdict.overall_rating).toBeGreaterThanOrEqual(8);
+    expect(result.analysis?.verdict.recommendation).toBe("worth_buying");
+  });
+
+  it("keeps thin unknown pages low and unable to produce a positive recommendation", async () => {
+    const payload = createPayload({ imageUrls: [] });
+    payload.page.product.pageState = "thin_page";
+    payload.page.product.page_state = "thin_page";
+    payload.page.product.sourceConfidenceScore = 0.2;
+    payload.page.product.source_confidence_score = 0.2;
+    payload.classification = {
+      ...payload.classification,
+      material_family: "unknown",
+      source_confidence_score: 0.2,
+      source_confidence_label: "low",
+      quality_signals: [],
+      quality_concerns: ["unknown: material composition not found"]
+    };
+
+    const result = await handleQualityCheckPayload(payload, {
+      env: testEnv(),
+      requestId: () => "thin-unknown-band",
+      fetcher: async (input) => {
+        expect(String(input)).toBe("https://api.openai.com/v1/responses");
+        return mockOpenAIVerdictResponse({
+          recommendation: "worth_buying",
+          scores: {
+            quality: 3.8,
+            value: 3.8,
+            durability: 3.8,
+            aesthetic: 4.5,
+            confidence: 0.2
+          }
+        });
+      }
+    });
+
+    expect(result.analysis?.verdict.overall_rating).toBeLessThan(4.5);
+    expect(result.analysis?.verdict.recommendation).toBe("cant_assess");
+  });
+
+  it("separates expensive luxury quality from weak value", async () => {
+    const payload = createPayload({ imageUrls: [] });
+    payload.page.product.fields.title = field("Luxury Cashmere Sweater");
+    payload.page.product.fields.price = field("695");
+    payload.page.product.fields.materials = field("100% cashmere");
+    payload.classification = {
+      ...payload.classification,
+      brand: "Mr Porter",
+      brand_tier: "luxury",
+      category: "knitwear",
+      material_family: "wool",
+      price: "£695",
+      material_description: "100% cashmere."
+    };
+
+    const result = await handleQualityCheckPayload(payload, {
+      env: testEnv(),
+      requestId: () => "luxury-quality-value-split",
+      fetcher: async (input) => {
+        expect(String(input)).toBe("https://api.openai.com/v1/responses");
+        return mockOpenAIVerdictResponse({
+          recommendation: "consider",
+          scores: {
+            quality: 8.8,
+            value: 4.4,
+            durability: 7.0,
+            aesthetic: 8.7,
+            confidence: 0.84
+          }
+        });
+      }
+    });
+
+    expect(result.analysis?.verdict.scores.quality).toBeGreaterThanOrEqual(8.5);
+    expect(result.analysis?.verdict.scores.value).toBeLessThan(5);
+    expect(result.analysis?.verdict.recommendation).toBe("poor_value");
+  });
+
+  it("keeps good scores when construction evidence is missing but confidence is lower", async () => {
+    const result = await handleQualityCheckPayload(createPayload({ imageUrls: [] }), {
+      env: testEnv(),
+      requestId: () => "good-score-missing-construction",
+      fetcher: async (input) => {
+        expect(String(input)).toBe("https://api.openai.com/v1/responses");
+        return mockOpenAIVerdictResponse({
+          recommendation: "worth_buying",
+          scores: {
+            quality: 7.8,
+            value: 7.7,
+            durability: 6.8,
+            aesthetic: 7.6,
+            confidence: 0.52
+          },
+          unverified: [
+            {
+              title: "Construction unclear",
+              description: "The page does not show seam linking or close-up finishing, so build confidence is limited.",
+              evidence_type: "construction",
+              confidence: "medium"
+            }
+          ]
+        });
+      }
+    });
+
+    expect(result.analysis?.verdict.overall_rating).toBeGreaterThanOrEqual(7);
+    expect(result.analysis?.verdict.scores.confidence).toBe(0.52);
+    expect(result.analysis?.verdict.recommendation).toBe("worth_buying");
+    expect(result.analysis?.verdict.unverified).toEqual(
+      expect.arrayContaining([expect.objectContaining({ label: "Construction unclear" })])
+    );
+  });
+
   it("creates a traceable public evidence pack and lifts Kamakura WQGS04 above the old under-score", async () => {
     const payload = createPayload({ imageUrls: [] });
     payload.page.url = "https://kamakurashirts.com/products/wqgs04";
@@ -1725,6 +1984,87 @@ function mockOpenAIVerdictResponse(overrides: Record<string, unknown> = {}): Res
       ...overrides
     })
   });
+}
+
+function mockGeminiVisionResponse(): Response {
+  return Response.json({
+    candidates: [
+      {
+        content: {
+          parts: [
+            {
+              text: JSON.stringify({
+                visual_cues: [
+                  {
+                    cue: "The knit surface looks even in the product image.",
+                    confidence: "medium",
+                    evidence_type: "texture_appearance",
+                    image_limitations: ["studio lighting"]
+                  }
+                ],
+                expert_inferences: [
+                  {
+                    inference: "The even surface supports a cleaner aesthetic read.",
+                    quality_dimension: "aesthetic_refinement",
+                    confidence: "medium",
+                    basis: "inferred_from_image",
+                    why_it_matters: "A smoother surface can make knitwear look more refined.",
+                    caveat: "Cannot verify yarn quality or pilling resistance from the image alone.",
+                    score_dimension: "aesthetic",
+                    score_effect: "small_positive"
+                  }
+                ],
+                missing_views: ["macro material close-up"],
+                image_quality_limits: ["studio lighting"]
+              })
+            }
+          ]
+        }
+      }
+    ]
+  });
+}
+
+function mockEvidenceAgentResponse(): Response {
+  return Response.json({
+    output_text: JSON.stringify({
+      external_sources_found: true,
+      useful_sources_count: 1,
+      external_evidence_quality: "limited",
+      external_score_impact: "low",
+      evidence: [
+        {
+          source_domain: "reddit.com",
+          source_url: "https://www.reddit.com/r/malefashionadvice/comments/example/cos_merino_knitwear/",
+          evidence_type: "independent_review",
+          source_type: "reddit",
+          specificity: "same_brand_category",
+          concrete_insight: "Several owners say COS merino knitwear can be good value but may need careful washing.",
+          theme: "shrinkage",
+          sentiment: "mixed",
+          quote_or_snippet: "good value but wash carefully",
+          applies_to_product: "partially",
+          score_dimensions_affected: ["confidence"],
+          claim: "COS merino knitwear owner feedback is generally positive but washing care matters.",
+          quote: "good value but wash carefully",
+          relevance_score: 0.72,
+          confidence: 0.62,
+          affects: ["confidence"],
+          reason_included: "Relevant same-brand category owner evidence."
+        }
+      ],
+      key_external_insights: ["COS merino knitwear appears well regarded, but wash behaviour needs care."],
+      repeated_themes: [],
+      conflicting_evidence: [],
+      evidence_gaps: [],
+      cross_source_themes: [],
+      rejected_sources: []
+    })
+  });
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function isStage6Request(init?: RequestInit): boolean {
