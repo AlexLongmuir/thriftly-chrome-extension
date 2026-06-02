@@ -886,7 +886,7 @@ function AlternativeRow({ alternative }: { alternative: AlternativeItem }) {
 }
 
 function HowScoresSection({ verdict }: { verdict: Stage6Verdict }) {
-  const [openCategory, setOpenCategory] = useState("Quality");
+  const [openCategory, setOpenCategory] = useState<string | null>("Quality");
   const rows = [
     { title: "Quality", score: verdict.scores.quality, verdict: verdict.verdicts.quality },
     { title: "Value", score: verdict.scores.value, verdict: verdict.verdicts.value },
@@ -905,10 +905,10 @@ function HowScoresSection({ verdict }: { verdict: Stage6Verdict }) {
           const isOpen = openCategory === row.title;
           return (
             <div className={`score-card${isOpen ? " score-card--open" : ""}`} key={row.title}>
-              <button className="score-card-head" type="button" onClick={() => setOpenCategory(row.title)} aria-expanded={isOpen}>
+              <button className="score-card-head" type="button" onClick={() => setOpenCategory(isOpen ? null : row.title)} aria-expanded={isOpen}>
                 <span>{row.title}</span>
                 <strong>{score}<small>/100</small></strong>
-                {isOpen ? <ChevronDownIcon /> : null}
+                <ChevronDownIcon />
               </button>
               <div className="score-card-body" aria-hidden={!isOpen}>
                 <Meter value={score} max={100} />

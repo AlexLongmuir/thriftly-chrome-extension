@@ -437,8 +437,12 @@
   width: 11px;
   height: 11px;
   color: var(--muted-foreground);
-  transform: rotate(180deg);
+  transform: rotate(-90deg);
   transition: transform 180ms ease;
+}
+
+.score-card--open .caret-icon {
+  transform: rotate(0deg);
 }
 
 .score-card-body {
@@ -3008,8 +3012,12 @@ pre {
   width: 11px;
   height: 11px;
   color: var(--muted-foreground);
-  transform: rotate(180deg);
+  transform: rotate(-90deg);
   transition: transform 180ms ease;
+}
+
+.score-card--open .caret-icon {
+  transform: rotate(0deg);
 }
 
 .score-card-body {
