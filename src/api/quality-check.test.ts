@@ -52,7 +52,7 @@ describe("quality-check API", () => {
         requestId: () => "bad-openai-output",
         fetcher: async (input) => {
           expect(String(input)).toBe("https://api.openai.com/v1/responses");
-          return Response.json({ output_text: JSON.stringify({ recommendation: "buy" }) });
+          return Response.json({ output_text: JSON.stringify({ recommendation: "worth_buying" }) });
         }
       })
     ).rejects.toThrow("OpenAI verdict response was missing scores.");
@@ -423,7 +423,7 @@ describe("quality-check API", () => {
 
     expect(result).toMatchObject({
       requestId: "request-stable",
-      summary: 'Stage 6 verdict completed for "Merino Jumper": buy (7.1/10).',
+      summary: 'Stage 6 verdict completed for "Merino Jumper": worth_buying (7.1/10).',
       receivedUrl: "https://shop.example/products/merino-jumper",
       source: "backend",
       capturedTitle: "Merino Jumper",
@@ -480,7 +480,7 @@ describe("quality-check API", () => {
         },
         verdict: {
           overall_rating: 7.1,
-          recommendation: "buy",
+          recommendation: "worth_buying",
           scores: {
             quality: 7.4,
             value: 6.8,
@@ -785,11 +785,11 @@ describe("quality-check API", () => {
 
   it("downgrades overconfident model output for weak source data", async () => {
     const payload = createPayload({ imageUrls: [] });
-    payload.page.product.sourceConfidenceScore = 0.28;
-    payload.page.product.source_confidence_score = 0.28;
+    payload.page.product.sourceConfidenceScore = 0.2;
+    payload.page.product.source_confidence_score = 0.2;
     payload.page.product.fields.materials = field(null);
     payload.classification.material_family = "unknown";
-    payload.classification.source_confidence_score = 0.28;
+    payload.classification.source_confidence_score = 0.2;
     payload.classification.source_confidence_label = "low";
     payload.classification.quality_signals = [];
     payload.classification.quality_concerns = [
@@ -803,13 +803,13 @@ describe("quality-check API", () => {
       fetcher: async (input) => {
         expect(String(input)).toBe("https://api.openai.com/v1/responses");
         return mockOpenAIVerdictResponse({
-          recommendation: "strong_buy",
+          recommendation: "excellent_pick",
           scores: {
             quality: 3.8,
             value: 3.8,
             durability: 3.8,
             aesthetic: 4.5,
-            confidence: 1
+            confidence: 0.2
           },
           verdicts: {
             quality: { verdict: "Material composition was not found, so quality cannot be judged strongly.", confidence: "low", evidence_type: "unknown" },
@@ -832,10 +832,10 @@ describe("quality-check API", () => {
     });
 
     expect(result.analysis?.verdict).toMatchObject({
-      recommendation: "not_enough_info",
+      recommendation: "cant_assess",
       confidence_label: "low",
       scores: expect.objectContaining({
-        confidence: 0.28
+        confidence: 0.2
       }),
       verdicts: {
         quality: expect.objectContaining({
@@ -847,7 +847,7 @@ describe("quality-check API", () => {
     expect(result.analysis?.verdict.reasoning_flags).toEqual(
       expect.arrayContaining(["material_composition_not_found", "weak_source_data"])
     );
-    expect(result.analysis?.verdict.overall_rating).toBeLessThanOrEqual(5.2);
+    expect(result.analysis?.verdict.overall_rating).toBe(3.8);
   });
 
   it("uses GPT-5.4-mini verdict scores without deterministic score clamping", async () => {
@@ -859,7 +859,7 @@ describe("quality-check API", () => {
         return Response.json({
           output_text: JSON.stringify({
             overall_rating: 9.9,
-            recommendation: "strong_buy",
+            recommendation: "excellent_pick",
             recommendation_summary: "Model tried to overstate the item.",
             scores: {
               quality: 10,
@@ -902,11 +902,81 @@ describe("quality-check API", () => {
         value: 10,
         durability: 10,
         aesthetic: 10,
-        confidence: 0.86
+        confidence: 1
       },
       matched_examples: expect.arrayContaining(["approved_merino_knit_mid_premium_001"])
     });
-    expect(result.analysis?.verdict.overall_rating).toBe(9.9);
+    expect(result.analysis?.verdict.overall_rating).toBe(10);
+  });
+
+  it("rejects old recommendation labels from the model", async () => {
+    await expect(
+      handleQualityCheckPayload(createPayload({ imageUrls: [] }), {
+        env: testEnv(),
+        requestId: () => "old-label-rejected",
+        fetcher: async (input) => {
+          expect(String(input)).toBe("https://api.openai.com/v1/responses");
+          return mockOpenAIVerdictResponse({ recommendation: "buy" });
+        }
+      })
+    ).rejects.toThrow("OpenAI verdict response had invalid recommendation.");
+  });
+
+  it("softens low-confidence excellent picks without capping the rating", async () => {
+    const result = await handleQualityCheckPayload(createPayload({ imageUrls: [] }), {
+      env: testEnv(),
+      requestId: () => "low-confidence-softened",
+      fetcher: async (input) => {
+        expect(String(input)).toBe("https://api.openai.com/v1/responses");
+        return mockOpenAIVerdictResponse({
+          recommendation: "excellent_pick",
+          scores: {
+            quality: 10,
+            value: 10,
+            durability: 10,
+            aesthetic: 10,
+            confidence: 0.4
+          }
+        });
+      }
+    });
+
+    expect(result.analysis?.verdict).toMatchObject({
+      recommendation: "consider",
+      scores: expect.objectContaining({
+        confidence: 0.4
+      }),
+      confidence_label: "low"
+    });
+    expect(result.analysis?.verdict.overall_rating).toBe(9.6);
+  });
+
+  it("preserves evidence-backed poor value recommendations", async () => {
+    const result = await handleQualityCheckPayload(createPayload({ imageUrls: [] }), {
+      env: testEnv(),
+      requestId: () => "poor-value-preserved",
+      fetcher: async (input) => {
+        expect(String(input)).toBe("https://api.openai.com/v1/responses");
+        return mockOpenAIVerdictResponse({
+          recommendation: "poor_value",
+          scores: {
+            quality: 7.4,
+            value: 4.8,
+            durability: 6.5,
+            aesthetic: 7.1,
+            confidence: 0.86
+          },
+          verdicts: {
+            quality: { verdict: "Material signal is solid.", confidence: "high", evidence_type: "stated_on_page" },
+            value: { verdict: "The price is not justified by the available construction detail.", confidence: "medium", evidence_type: "similar_approved_example" },
+            durability: { verdict: "Care and construction evidence limit the durability read.", confidence: "medium", evidence_type: "general_material_knowledge" },
+            aesthetic: { verdict: "The styling is clean and versatile.", confidence: "medium", evidence_type: "inferred_from_image" }
+          }
+        });
+      }
+    });
+
+    expect(result.analysis?.verdict.recommendation).toBe("poor_value");
   });
 
   it("creates a traceable public evidence pack and lifts Kamakura WQGS04 above the old under-score", async () => {
@@ -1161,7 +1231,7 @@ describe("quality-check API", () => {
       ])
     );
     expect(result.analysis?.verdict.reasoning_flags).toContain("external_evidence_none");
-    expect(result.analysis?.verdict.scores.confidence).toBeLessThan(payload.classification.source_confidence_score);
+    expect(result.analysis?.verdict.scores.confidence).toBe(payload.classification.source_confidence_score);
   });
 
   it("uses the AI Evidence Agent and separates UNIQLO Oxford external and benchmark evidence", async () => {
@@ -1615,7 +1685,7 @@ function mockOpenAIVerdictResponse(overrides: Record<string, unknown> = {}): Res
   return Response.json({
     output_text: JSON.stringify({
       overall_rating: 7.2,
-      recommendation: "buy",
+      recommendation: "worth_buying",
       recommendation_summary: "Strong fabric signal, with a few checks left.",
       scores: {
         quality: 7.4,
