@@ -24,6 +24,7 @@ type SignalTone = "positive" | "negative" | "neutral";
 
 const DEFAULT_MONTHLY_WEARS = 8;
 const LOADING_STEP_ACKNOWLEDGEMENT_MS = 650;
+const SHOW_DEBUG_EVIDENCE = import.meta.env.VITE_SCOUTED_DEBUG_EVIDENCE === "true";
 const SAMPLE_ANALYSIS = {
   brand: "Arket",
   title: "Relaxed Linen Shirt",
@@ -170,12 +171,12 @@ export function App() {
               <ProductSummary title={productTitle} brand={productBrand} price={productPrice} imageUrl={productImage} classification={classification} />
               <section className="notice">
                 <h2>Product Evidence Captured</h2>
-                <p>Backend verdict is not available yet. The raw extraction and structured classification are available in debug mode.</p>
+                <p>Backend verdict is not available yet. Try again once the backend is reachable.</p>
               </section>
             </>
           ) : null}
 
-          {status !== "error" ? <section className="debug-shell">
+          {SHOW_DEBUG_EVIDENCE && status !== "error" ? <section className="debug-shell">
             <button className="debug-toggle" type="button" onClick={() => setDebugOpen((open) => !open)}>
               <span>Debug Evidence</span>
               <span>{debugOpen ? "Hide" : "Show"}</span>
@@ -1112,7 +1113,7 @@ function DebugPanel({
   return (
     <div className="debug-panel">
       <p>
-        Shows the underlying extraction, classification, visual guardrails and backend response. This opens by default in local/dev builds.
+        Shows the underlying extraction, classification, visual guardrails and backend response for bug testing builds.
       </p>
       <pre>{JSON.stringify(debugPayload, null, 2)}</pre>
     </div>
