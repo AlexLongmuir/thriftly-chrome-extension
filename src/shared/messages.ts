@@ -480,7 +480,7 @@ export type Stage6Verdict = {
   evidence_score_effects: string[];
   summary: string;
   model: string;
-  model_status: "model_completed" | "model_unavailable";
+  model_status: "model_completed";
 };
 
 export type BackendVisualEnrichmentResult = {
@@ -528,7 +528,6 @@ export type BackendAnalysis = {
   model_config: {
     vision_model: string;
     core_model: string;
-    premium_fallback_model: string;
     embedding_model: string;
     openai_configured: boolean;
   };

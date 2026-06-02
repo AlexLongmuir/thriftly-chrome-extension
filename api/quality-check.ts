@@ -49,7 +49,6 @@ const MAX_IMAGE_BYTES = 4_000_000;
 const REQUEST_BODY_LIMIT_BYTES = 1_000_000;
 const DEFAULT_VISION_MODEL = "gemini-3.0-flash";
 const DEFAULT_CORE_MODEL = "gpt-5.4-mini";
-const DEFAULT_PREMIUM_FALLBACK_MODEL = "gpt-5.4";
 const DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small";
 const FORBIDDEN_STRONG_VISUAL_CLAIM_PATTERN =
   /\b(?:made from|made of|is genuine|are genuine|authentic|real leather|full[- ]grain|top[- ]grain|100%\s+|pure\s+(?:wool|cotton|linen|leather|silk)|will last|long[- ]term durable|welted construction|goodyear welted|fabric quality is|construction is (?:excellent|poor|high quality|low quality)|(?:is|are) (?:genuine|authentic|real|pure|durable|high quality|low quality|wool|cotton|linen|leather|silk))\b/i;
@@ -69,7 +68,6 @@ type QualityCheckEnv = {
   openaiApiKey: string | null;
   visionModel: string;
   coreModel: string;
-  premiumFallbackModel: string;
   embeddingModel: string;
   publicEvidenceSearchEnabled: boolean;
 };
@@ -146,8 +144,6 @@ type EvidencePack = {
   diagnostics: string[];
   agentPack: ExternalEvidenceAgentPack;
 };
-
-type ScoreGuardrails = Record<keyof Omit<VerdictScores, "confidence">, { min: number; max: number }>;
 
 const APPROVED_EXAMPLES: MatchedApprovedExample[] = [
   example("approved_merino_knit_mid_premium_001", "knitwear", "wool", "mid-premium", "£80-£150", [7.8, 7.8, 7.0, 7.5, 0.86], "buy", "COS", "Pure Cashmere Jumper", "£135", "https://www.cos.com/"),
@@ -309,7 +305,6 @@ export async function handleQualityCheckPayload(
     model_config: {
       vision_model: env.visionModel,
       core_model: env.coreModel,
-      premium_fallback_model: env.premiumFallbackModel,
       embedding_model: env.embeddingModel,
       openai_configured: Boolean(env.openaiApiKey)
     }
@@ -330,12 +325,11 @@ async function createStage6Verdict(context: Stage6Context): Promise<Stage6Verdic
     throw new RequestError(503, "OPENAI_API_KEY is not configured; Stage 6 core analysis is unavailable.");
   }
 
-  const baseline = createHeuristicVerdict(context, "model_unavailable");
-  const modelVerdict = await runOpenAIVerdict(context, baseline);
-  return sanitiseStage6Verdict(modelVerdict, baseline, context);
+  const modelVerdict = await runOpenAIVerdict(context);
+  return normaliseAiStage6Verdict(modelVerdict, context);
 }
 
-async function runOpenAIVerdict(context: Stage6Context, fallback: Stage6Verdict): Promise<Partial<Stage6Verdict>> {
+async function runOpenAIVerdict(context: Stage6Context): Promise<Partial<Stage6Verdict>> {
   const response = await context.fetcher("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: {
@@ -354,7 +348,7 @@ async function runOpenAIVerdict(context: Stage6Context, fallback: Stage6Verdict)
         }
       },
       instructions: buildStage6Instructions(),
-      input: JSON.stringify(buildStage6ModelInput(context, fallback))
+      input: JSON.stringify(buildStage6ModelInput(context))
     })
   });
 
@@ -387,101 +381,92 @@ function assertUsableStage6ModelOutput(value: Partial<Stage6Verdict>): void {
   }
 }
 
-function createHeuristicVerdict(context: Stage6Context, status: Stage6Verdict["model_status"]): Stage6Verdict {
-  const classification = context.payload.classification;
-  const product = context.payload.page.product;
-  const sourceConfidence = externalCoverageConfidenceCap(
-    confidenceCap(product.page_state, classification.source_confidence_score),
-    context.evidencePack
-  );
-  const guardrails = buildScoreGuardrails(classification, product.page_state, sourceConfidence);
-  const anchorScores = averageAnchorScores(context.matchedExamples);
+function normaliseAiStage6Verdict(candidate: Partial<Stage6Verdict>, context: Stage6Context): Stage6Verdict {
   const scores: VerdictScores = {
-    quality: clampScore(applyPublicEvidenceEffects(blendScore(midpoint(guardrails.quality), anchorScores.quality, 0.35), context.evidencePack.scoringEvidence, "quality"), guardrails.quality),
-    value: clampScore(applyPublicEvidenceEffects(blendScore(midpoint(guardrails.value), anchorScores.value, 0.35), context.evidencePack.scoringEvidence, "value"), guardrails.value),
-    durability: clampScore(applyPublicEvidenceEffects(blendScore(midpoint(guardrails.durability), anchorScores.durability, 0.35), context.evidencePack.scoringEvidence, "durability"), guardrails.durability),
-    aesthetic: clampScore(
-      applyVisualEffects(blendScore(midpoint(guardrails.aesthetic), anchorScores.aesthetic, 0.3), context.visual.expert_inferences),
-      guardrails.aesthetic
-    ),
-    confidence: round2(sourceConfidence)
+    quality: requiredScore(candidate.scores?.quality, "quality", 10),
+    value: requiredScore(candidate.scores?.value, "value", 10),
+    durability: requiredScore(candidate.scores?.durability, "durability", 10),
+    aesthetic: requiredScore(candidate.scores?.aesthetic, "aesthetic", 10),
+    confidence: confidenceSafeScore(requiredScore(candidate.scores?.confidence, "confidence", 1), context)
   };
   const overall = deriveOverall(scores);
-  const recommendation = chooseRecommendation(overall, scores, classification, product.page_state);
-  const reasoningFlags = buildReasoningFlags(context);
-  const confidenceLabel = verdictConfidence(scores.confidence);
-
-  const baseVerdict = {
-    overall_rating: overall,
-    recommendation,
-    recommendation_summary: recommendationSummary(recommendation, classification, scores),
-    scores,
-    confidence_label: confidenceLabel,
-    good_signs: [],
-    watch_outs: [],
-    unverified: [],
-    verdicts: {
-      quality: qualityVerdict(context, scores, confidenceLabel),
-      value: valueVerdict(classification, context.matchedExamples, scores),
-      durability: durabilityVerdict(context, scores, confidenceLabel),
-      aesthetic: aestheticVerdict(context, scores, confidenceLabel)
-    },
-    reasoning_flags: reasoningFlags,
-    matched_examples: context.matchedExamples.map((item) => item.id),
-    evidence_score_effects: describeEvidenceScoreEffects(context.evidencePack.scoringEvidence),
-    summary: summaryLine(recommendation, scores, classification),
-    model: context.env.coreModel,
-    model_status: status
-  };
-
-  return baseVerdict;
-}
-
-function sanitiseStage6Verdict(
-  candidate: Partial<Stage6Verdict>,
-  fallback: Stage6Verdict,
-  context: Stage6Context
-): Stage6Verdict {
-  const guardrails = buildScoreGuardrails(
-    context.payload.classification,
-    context.payload.page.product.page_state,
-    confidenceCap(context.payload.page.product.page_state, context.payload.classification.source_confidence_score)
-  );
-  const scores: VerdictScores = {
-    quality: clampScore(numberOr(candidate.scores?.quality, fallback.scores.quality), guardrails.quality),
-    value: clampScore(numberOr(candidate.scores?.value, fallback.scores.value), guardrails.value),
-    durability: clampScore(numberOr(candidate.scores?.durability, fallback.scores.durability), guardrails.durability),
-    aesthetic: clampScore(numberOr(candidate.scores?.aesthetic, fallback.scores.aesthetic), guardrails.aesthetic),
-    confidence: fallback.scores.confidence
-  };
-  const overall = deriveOverall(scores);
-  const recommendation = isRecommendation(candidate.recommendation) ? candidate.recommendation : chooseRecommendation(overall, scores, context.payload.classification, context.payload.page.product.page_state);
+  const recommendation =
+    scores.confidence < 0.45 || context.payload.page.product.page_state !== "product_page" || context.payload.classification.material_family === "unknown"
+      ? "not_enough_info"
+      : requiredRecommendation(candidate.recommendation);
   const confidenceLabel = verdictConfidence(scores.confidence);
 
   const baseVerdict: Stage6Verdict = {
     overall_rating: overall,
     recommendation,
-    recommendation_summary: sentenceText(candidate.recommendation_summary, fallback.recommendation_summary, 90),
+    recommendation_summary: requiredSentence(candidate.recommendation_summary, "recommendation_summary", 90),
     scores,
     confidence_label: confidenceLabel,
     good_signs: [],
     watch_outs: [],
     unverified: [],
     verdicts: {
-      quality: cleanDimensionVerdict(candidate.verdicts?.quality, fallback.verdicts.quality, confidenceLabel),
-      value: cleanDimensionVerdict(candidate.verdicts?.value, fallback.verdicts.value, confidenceLabel),
-      durability: cleanDimensionVerdict(candidate.verdicts?.durability, fallback.verdicts.durability, confidenceLabel),
-      aesthetic: cleanDimensionVerdict(candidate.verdicts?.aesthetic, fallback.verdicts.aesthetic, confidenceLabel)
+      quality: cleanModelDimensionVerdict(candidate.verdicts?.quality, confidenceLabel, "quality"),
+      value: cleanModelDimensionVerdict(candidate.verdicts?.value, confidenceLabel, "value"),
+      durability: cleanModelDimensionVerdict(candidate.verdicts?.durability, confidenceLabel, "durability"),
+      aesthetic: cleanModelDimensionVerdict(candidate.verdicts?.aesthetic, confidenceLabel, "aesthetic")
     },
-    reasoning_flags: uniqueStrings([...(candidate.reasoning_flags || []), ...fallback.reasoning_flags]).slice(0, 10),
-    matched_examples: fallback.matched_examples,
-    evidence_score_effects: uniqueStrings([...(candidate.evidence_score_effects || []), ...fallback.evidence_score_effects]).slice(0, 10),
-    summary: cleanText(candidate.summary, fallback.summary, 160),
+    reasoning_flags: uniqueStrings([...(candidate.reasoning_flags || []), ...buildReasoningFlags(context)]).slice(0, 10),
+    matched_examples: context.matchedExamples.map((item) => item.id),
+    evidence_score_effects: uniqueStrings(candidate.evidence_score_effects || []).slice(0, 10),
+    summary: requiredCleanText(candidate.summary, "summary", 160),
     model: context.env.coreModel,
     model_status: "model_completed"
   };
 
   return addShopperSignals(baseVerdict, context, candidate);
+}
+
+function requiredScore(value: unknown, field: keyof VerdictScores, max: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > max) {
+    throw new RequestError(502, `OpenAI verdict response had invalid ${field} score.`);
+  }
+  return field === "confidence" ? round2(value) : round1(value);
+}
+
+function confidenceSafeScore(modelConfidence: number, context: Stage6Context): number {
+  const product = context.payload.page.product;
+  const classification = context.payload.classification;
+  const cap = externalCoverageConfidenceCap(confidenceCap(product.page_state, classification.source_confidence_score), context.evidencePack);
+  return round2(Math.min(modelConfidence, cap));
+}
+
+function requiredRecommendation(value: unknown): Recommendation {
+  if (!isRecommendation(value)) {
+    throw new RequestError(502, "OpenAI verdict response had invalid recommendation.");
+  }
+  return value;
+}
+
+function requiredCleanText(value: unknown, field: string, maxLength: number): string {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new RequestError(502, `OpenAI verdict response was missing ${field}.`);
+  }
+  return cleanText(value, "", maxLength);
+}
+
+function requiredSentence(value: unknown, field: string, maxLength: number): string {
+  return sentenceText(requiredCleanText(value, field, maxLength * 2), "", maxLength);
+}
+
+function cleanModelDimensionVerdict(
+  candidate: DimensionVerdict | undefined,
+  confidenceCapValue: VerdictConfidence,
+  field: keyof Stage6Verdict["verdicts"]
+): DimensionVerdict {
+  if (!candidate || typeof candidate !== "object") {
+    throw new RequestError(502, `OpenAI verdict response was missing ${field} verdict.`);
+  }
+  return {
+    verdict: requiredCleanText(candidate.verdict, `${field} verdict`, 520),
+    confidence: capVerdictConfidence(isVerdictConfidence(candidate.confidence) ? candidate.confidence : confidenceCapValue, confidenceCapValue),
+    evidence_type: isVerdictEvidenceType(candidate.evidence_type) ? candidate.evidence_type : "unknown"
+  };
 }
 
 function addShopperSignals(verdict: Stage6Verdict, context: Stage6Context, candidate?: Partial<Stage6Verdict>): Stage6Verdict {
@@ -2001,88 +1986,16 @@ function similarityScore(classification: ProductClassification, exampleItem: Mat
   return round2(Math.min(0.98, score + 0.1));
 }
 
-function buildScoreGuardrails(
-  classification: ProductClassification,
-  pageState: BackendPayload["page"]["product"]["page_state"],
-  confidence: number
-): ScoreGuardrails {
-  if (pageState !== "product_page" || confidence < 0.3) {
-    return {
-      quality: { min: 1.5, max: 4.2 },
-      value: { min: 1.5, max: 4.2 },
-      durability: { min: 1.5, max: 4.2 },
-      aesthetic: { min: 1.5, max: 5.0 }
-    };
-  }
-
-  const base = materialBase(classification.material_family);
-  const tierAdjustment = brandTierAdjustment(classification.brand_tier);
-  const priceAdjustment = valuePriceAdjustment(classification.price, classification.brand_tier);
-  const constructionPenalty = classification.construction_description.includes("not clearly stated") ? -0.3 : 0.2;
-  const carePenalty = classification.quality_concerns.some((item) => item.includes("material composition not found")) ? -0.8 : 0;
-
-  return {
-    quality: range(base.quality + tierAdjustment + constructionPenalty + carePenalty, 1.1),
-    value: range(base.value + priceAdjustment + carePenalty, 1.2),
-    durability: range(base.durability + constructionPenalty + carePenalty, 1.1),
-    aesthetic: range(base.aesthetic + tierAdjustment * 0.8, 1.4)
-  };
-}
-
 function confidenceCap(pageState: BackendPayload["page"]["product"]["page_state"], score: number): number {
   if (pageState !== "product_page") return Math.min(score, 0.24);
   if (score < 0.45) return Math.min(score, 0.44);
   return Math.min(0.92, score);
 }
 
-function materialBase(material: MaterialFamily): Omit<VerdictScores, "confidence"> {
-  const table: Record<MaterialFamily, Omit<VerdictScores, "confidence">> = {
-    wool: { quality: 7.4, value: 6.8, durability: 6.8, aesthetic: 7.2 },
-    cotton: { quality: 6.4, value: 6.8, durability: 6.2, aesthetic: 6.3 },
-    linen: { quality: 6.9, value: 6.7, durability: 6.3, aesthetic: 7.0 },
-    leather: { quality: 6.8, value: 6.3, durability: 6.7, aesthetic: 7.0 },
-    silk: { quality: 7.2, value: 5.8, durability: 5.3, aesthetic: 7.7 },
-    synthetic: { quality: 5.2, value: 5.8, durability: 5.8, aesthetic: 5.7 },
-    viscose: { quality: 5.8, value: 6.2, durability: 5.3, aesthetic: 6.7 },
-    blend: { quality: 6.1, value: 6.3, durability: 6.0, aesthetic: 6.3 },
-    unknown: { quality: 4.0, value: 4.0, durability: 4.0, aesthetic: 5.0 }
-  };
-  return table[material];
-}
-
-function brandTierAdjustment(tier: BrandTier): number {
-  return { budget: -0.6, "high-street": -0.2, "mid-premium": 0.25, premium: 0.45, luxury: 0.55, unknown: -0.25 }[tier];
-}
-
-function valuePriceAdjustment(price: string | null, tier: BrandTier): number {
-  const amount = parsePrice(price);
-  if (amount === null) return -0.4;
-  const expensive = tier === "luxury" ? 700 : tier === "premium" ? 250 : tier === "mid-premium" ? 150 : 80;
-  const cheap = tier === "luxury" ? 250 : tier === "premium" ? 100 : tier === "mid-premium" ? 60 : 30;
-  if (amount > expensive) return -1.4;
-  if (amount < cheap) return 0.6;
-  return 0;
-}
-
 function deriveOverall(scores: VerdictScores): number {
   const raw = scores.quality * 0.32 + scores.value * 0.28 + scores.durability * 0.2 + scores.aesthetic * 0.14 + scores.confidence * 10 * 0.06;
   const capped = scores.confidence < 0.45 ? Math.min(raw, 5.2) : raw;
   return round1(capped);
-}
-
-function chooseRecommendation(
-  overall: number,
-  scores: VerdictScores,
-  classification: ProductClassification,
-  pageState: BackendPayload["page"]["product"]["page_state"]
-): Recommendation {
-  if (pageState !== "product_page" || scores.confidence < 0.45 || classification.material_family === "unknown") return "not_enough_info";
-  if (scores.quality >= 7.3 && scores.value <= 5.2) return "overpriced";
-  if (overall >= 8.2 && scores.value >= 7.2) return "strong_buy";
-  if (overall >= 7.1 && scores.value >= 6.4) return "buy";
-  if (overall >= 5.7) return "consider";
-  if (overall >= 4.6) return "reconsider";
-  return "avoid";
 }
 
 function buildReasoningFlags(context: Stage6Context): string[] {
@@ -2100,89 +2013,16 @@ function buildReasoningFlags(context: Stage6Context): string[] {
   return uniqueStrings(flags);
 }
 
-function qualityVerdict(context: Stage6Context, scores: VerdictScores, confidence: VerdictConfidence): DimensionVerdict {
-  const classification = context.payload.classification;
-  const signal = classification.quality_signals[0];
-  const materialInsight = materialQualityInsight(classification);
-  const construction = constructionExpectation(classification.category);
-  const tone = scoreTone(scores.quality);
-
-  if (classification.material_family === "unknown") {
-    return dimension(
-      "Quality is capped because the page does not give a reliable fibre composition. Without that, a clothing expert cannot separate a decent basic from a cheap lookalike.",
-      "low",
-      "unknown"
-    );
-  }
-
-  if (signal) {
-    return dimension(
-      `${tone}: ${materialInsight} ${construction}`,
-      confidence,
-      signal.startsWith("stated on page") ? "stated_on_page" : "inferred_from_material"
-    );
-  }
-
-  return dimension(`${tone}: ${materialInsight} ${construction}`, confidence, "inferred_from_material");
-}
-
-function valueVerdict(
-  classification: ProductClassification,
-  examples: MatchedApprovedExample[],
-  scores: VerdictScores
-): DimensionVerdict {
-  if (!classification.price) return dimension("Price was not found, so value is uncertain.", "low", "unknown");
-  const anchor = examples[0];
-  const market = marketPriceContext(classification);
-  const price = classification.price;
-  const valueTone = scores.value >= 7 ? "looks strong" : scores.value < 5.5 ? "looks weak" : "looks fair but not exceptional";
-  return dimension(
-    `${price} ${valueTone} for this lane. ${market} The score is anchored against ${anchor?.id || "similar approved examples"}, not just the retailer's own positioning.`,
-    "medium",
-    "similar_approved_example"
-  );
-}
-
-function durabilityVerdict(context: Stage6Context, scores: VerdictScores, confidence: VerdictConfidence): DimensionVerdict {
-  const classification = context.payload.classification;
-  const tone = scoreTone(scores.durability);
-  const construction = constructionExpectation(classification.category);
-  if (classification.material_family === "wool") {
-    return dimension(`${tone}: Wool can be warm and resilient, but knitwear durability depends on yarn twist, gauge, abrasion points, washing, and pilling maintenance. ${construction}`, confidence, "general_material_knowledge");
-  }
-  if (classification.material_family === "leather") {
-    return dimension(`${tone}: Leather can age well when the hide, lining, sole/zip hardware, and edge finishing are good; the page/image evidence does not prove those higher-end construction details.`, "medium", "general_material_knowledge");
-  }
-  if (classification.material_family === "synthetic") {
-    return dimension(`${tone}: Synthetic fabrics can be easy-care and abrasion resistant, but cheaper versions often lose handle, pill, or look tired faster than better natural-fibre or technical fabrics.`, "medium", "general_material_knowledge");
-  }
-  if (classification.material_family === "cotton") {
-    return dimension(`${tone}: Cotton is washable and breathable, but shirt lifespan depends on fabric weight, yarn quality, collar/placket structure, seam neatness, and button attachment. ${construction}`, confidence, "general_material_knowledge");
-  }
-  if (classification.material_family === "linen") {
-    return dimension(`${tone}: Linen is strong and breathable but creases hard; durability is usually more about fabric weight, seam finish, and whether the loose weave distorts over time. ${construction}`, confidence, "general_material_knowledge");
-  }
-  return dimension(`${tone}: Expected lifespan is hard to separate from average without stronger fibre, care, and construction evidence. ${construction}`, "medium", "unknown");
-}
-
-function aestheticVerdict(context: Stage6Context, scores: VerdictScores, confidence: VerdictConfidence): DimensionVerdict {
-  const inference = context.visual.expert_inferences.find((item) => item.score_dimension === "aesthetic");
-  if (inference) return dimension(inference.inference, inference.confidence, "inferred_from_image");
-  const tags = context.payload.classification.style_tags.join(", ");
-  const classification = context.payload.classification;
-  const tone = scoreTone(scores.aesthetic);
-  const contextLine = aestheticContext(classification);
-  return dimension(
-    tags ? `${tone}: ${contextLine} The style reads as ${tags}, so the score is about versatility and refinement rather than novelty.` : `${tone}: Aesthetic judgement is limited by sparse product evidence.`,
-    confidence,
-    tags ? "stated_on_page" : "unknown"
-  );
-}
-
 function buildStage6Instructions(): string {
   return [
     "You are Stage 6 of a clothing Quality Check Chrome extension. Write as a clothing-market expert advising a normal shopper.",
-    "Return strict JSON only. Score within the supplied guardrails and stay consistent with matched approved examples.",
+    "Return strict JSON only. You own the scores, recommendation, verdicts, and shopper-facing descriptions.",
+    "Score quality, value, durability, and aesthetic on a 0-10 scale. Score confidence on a 0-1 scale.",
+    "Quality rubric: judge material quality, stated composition, construction evidence, finish, and category expectations.",
+    "Value rubric: judge price against material, construction, category, brand tier, evidence strength, comparable products, and market context.",
+    "Durability rubric: judge material behaviour, care burden, construction evidence, owner/external evidence, and likely wear failure points.",
+    "Aesthetic rubric: judge silhouette, proportion, visual refinement, versatility, styling context, and whether the item looks intentional for its lane.",
+    "Confidence rubric: judge evidence completeness, source specificity, exact-product support, image limitations, and unresolved evidence gaps.",
     "recommendation_summary must be one punchy sentence under 90 characters. No second explanatory sentence.",
     "Return only useful shopper signals. It is valid for good_signs, watch_outs, or unverified to be empty.",
     "Use three signal sections: good_signs for evidence-supported positives, watch_outs for genuine concerns or negative evidence, and unverified for missing or unclear information that limits confidence but is not itself negative.",
@@ -2195,6 +2035,7 @@ function buildStage6Instructions(): string {
     "Never use internal/process language in good_signs, watch_outs, or unverified: no product fit evidence, product durability evidence, 100% cotton stated, category anchors, score cannot be pushed, retrieved evidence, based on scraped data, guardrails, backend, source data, or model wording.",
     "Each dimension verdict must explain WHY the score is what it is, not merely restate the product: mention material trade-offs, construction signals expected for the category, market price context, and what prevents a higher score.",
     "For value, judge the observed price against item type, material, cut/styling, construction, durability, reviews, comparable products, market_context, and approved examples. Brand tier can be minor context only, not the core value argument.",
+    "matched_approved_examples are context/comparators only. They are not score anchors, and you do not need to agree with their expected_scores.",
     "For ratings below 7.0, include at least one concrete limitation. For ratings above 7.0, include why it beats the average and what caveat remains.",
     "Do not use generic filler like 'construction quality cannot be fully verified from images' unless you specify the exact missing evidence, e.g. seam close-up, button attachment, collar/placket structure, lining, sole attachment, stitch regularity, edge finishing.",
     "Do not hard-claim fibre authenticity, exact construction, leather grade, guaranteed build quality, or long-term durability from images.",
@@ -2202,11 +2043,11 @@ function buildStage6Instructions(): string {
     "Use external_evidence only for sources outside the current retailer domain. Exact-product outside evidence can move scores more than brand-reputation evidence.",
     "Use key_external_insights and repeated_themes as the synthesized shopper evidence layer. These should influence confidence/risk flags when Reddit/forum patterns repeat, and value expectations when editorial/category benchmarks define criteria.",
     "Use benchmark_evidence only for comparable products, price bands, or category norms; never treat benchmark/general sources as exact-product proof. Make score changes traceable in evidence_score_effects.",
-    "Weak source data must cap confidence and can return not_enough_info. Confidence must be deterministic from source evidence."
+    "Weak source data must lower confidence and can return not_enough_info. Explain limitations directly instead of adapting to a hidden baseline."
   ].join("\n");
 }
 
-function buildStage6ModelInput(context: Stage6Context, fallback: Stage6Verdict) {
+function buildStage6ModelInput(context: Stage6Context) {
   return {
     product: context.payload.page.product,
     classification: context.payload.classification,
@@ -2227,31 +2068,17 @@ function buildStage6ModelInput(context: Stage6Context, fallback: Stage6Verdict) 
       construction_expected_evidence: constructionExpectation(context.payload.classification.category),
       material_expert_context: materialQualityInsight(context.payload.classification),
       aesthetic_context: aestheticContext(context.payload.classification)
-    },
-    score_guardrails: buildScoreGuardrails(
-      context.payload.classification,
-      context.payload.page.product.page_state,
-      fallback.scores.confidence
-    ),
-    deterministic_baseline: fallback,
-    required_variance_tolerance: {
-      overall: 0.4,
-      quality: 0.4,
-      value: 0.5,
-      durability: 0.4,
-      aesthetic: 0.7,
-      confidence: "deterministic"
     }
   };
 }
 
 function stage6ResponseSchema() {
   const scoreProperties = {
-    quality: { type: "number" },
-    value: { type: "number" },
-    durability: { type: "number" },
-    aesthetic: { type: "number" },
-    confidence: { type: "number" }
+    quality: { type: "number", minimum: 0, maximum: 10 },
+    value: { type: "number", minimum: 0, maximum: 10 },
+    durability: { type: "number", minimum: 0, maximum: 10 },
+    aesthetic: { type: "number", minimum: 0, maximum: 10 },
+    confidence: { type: "number", minimum: 0, maximum: 1 }
   };
   const dimensionVerdict = {
     type: "object",
@@ -2281,7 +2108,7 @@ function stage6ResponseSchema() {
     additionalProperties: false,
     required: ["overall_rating", "recommendation", "recommendation_summary", "scores", "confidence_label", "good_signs", "watch_outs", "unverified", "verdicts", "reasoning_flags", "matched_examples", "evidence_score_effects", "summary"],
     properties: {
-      overall_rating: { type: "number" },
+      overall_rating: { type: "number", minimum: 0, maximum: 10 },
       recommendation: { enum: ["strong_buy", "buy", "consider", "reconsider", "overpriced", "avoid", "not_enough_info"] },
       recommendation_summary: { type: "string" },
       scores: { type: "object", additionalProperties: false, required: Object.keys(scoreProperties), properties: scoreProperties },
@@ -2341,56 +2168,6 @@ function example(
   };
 }
 
-function averageAnchorScores(examples: MatchedApprovedExample[]): VerdictScores {
-  if (examples.length === 0) return { quality: 5, value: 5, durability: 5, aesthetic: 5, confidence: 0.5 };
-  const weighted = examples.reduce(
-    (acc, item) => {
-      const weight = Math.max(0.05, item.similarity);
-      acc.quality += item.expected_scores.quality * weight;
-      acc.value += item.expected_scores.value * weight;
-      acc.durability += item.expected_scores.durability * weight;
-      acc.aesthetic += item.expected_scores.aesthetic * weight;
-      acc.confidence += item.expected_scores.confidence * weight;
-      acc.weight += weight;
-      return acc;
-    },
-    { quality: 0, value: 0, durability: 0, aesthetic: 0, confidence: 0, weight: 0 }
-  );
-  return {
-    quality: weighted.quality / weighted.weight,
-    value: weighted.value / weighted.weight,
-    durability: weighted.durability / weighted.weight,
-    aesthetic: weighted.aesthetic / weighted.weight,
-    confidence: weighted.confidence / weighted.weight
-  };
-}
-
-function applyVisualEffects(score: number, inferences: ExpertVisualInference[]): number {
-  return inferences.reduce((current, inference) => {
-    if (inference.score_dimension !== "aesthetic" && inference.score_dimension !== "quality") return current;
-    const delta = { none: 0, small_positive: 0.25, medium_positive: 0.4, small_negative: -0.25, medium_negative: -0.4 }[
-      inference.score_effect
-    ];
-    return current + delta;
-  }, score);
-}
-
-function range(center: number, radius: number): { min: number; max: number } {
-  return { min: round1(Math.max(1, center - radius)), max: round1(Math.min(9.4, center + radius)) };
-}
-
-function midpoint(value: { min: number; max: number }): number {
-  return (value.min + value.max) / 2;
-}
-
-function blendScore(local: number, anchor: number, anchorWeight: number): number {
-  return local * (1 - anchorWeight) + anchor * anchorWeight;
-}
-
-function clampScore(value: number, guardrail: { min: number; max: number }): number {
-  return round1(Math.min(guardrail.max, Math.max(guardrail.min, value)));
-}
-
 function round1(value: number): number {
   return Math.round(value * 10) / 10;
 }
@@ -2421,33 +2198,6 @@ function verdictConfidence(score: number): VerdictConfidence {
   if (score >= 0.75) return "high";
   if (score >= 0.45) return "medium";
   return "low";
-}
-
-function recommendationSummary(recommendation: Recommendation, classification: ProductClassification, scores: VerdictScores): string {
-  if (recommendation === "not_enough_info") return "Not enough trustworthy product evidence to make a buying call.";
-  if (recommendation === "overpriced") return "Quality signal is credible, but value looks weak at this price.";
-  if (recommendation === "buy" || recommendation === "strong_buy") return "Good material/value signal for this category, with normal care caveats.";
-  if (recommendation === "avoid") return "Weak evidence and weak underlying score make this hard to justify.";
-  return `${classification.material_family} ${classification.category} with mixed quality/value trade-offs.`;
-}
-
-function summaryLine(recommendation: Recommendation, scores: VerdictScores, classification: ProductClassification): string {
-  if (recommendation === "not_enough_info") return "Not enough evidence: keep confidence low and avoid strong claims.";
-  if (recommendation === "overpriced") return "Probably good, but the price is doing too much work.";
-  if (scores.quality >= 7 && scores.value >= 7) return `Quietly good ${classification.category}: strong enough material signal and fair value.`;
-  return `Mixed ${classification.category}: quality ${scores.quality}/10, value ${scores.value}/10.`;
-}
-
-function dimension(verdict: string, confidence: VerdictConfidence, evidenceType: VerdictEvidenceType): DimensionVerdict {
-  return { verdict, confidence, evidence_type: evidenceType };
-}
-
-function scoreTone(score: number): string {
-  if (score >= 8) return "Strong";
-  if (score >= 7) return "Good";
-  if (score >= 6) return "Solid but not special";
-  if (score >= 5) return "Mixed";
-  return "Weak";
 }
 
 function materialQualityInsight(classification: ProductClassification): string {
@@ -2620,19 +2370,6 @@ function aestheticContext(classification: ProductClassification): string {
   return "Aesthetic score reflects versatility, proportions, surface finish, and whether the piece looks refined for its market tier.";
 }
 
-function cleanDimensionVerdict(
-  candidate: DimensionVerdict | undefined,
-  fallback: DimensionVerdict,
-  confidenceCapValue: VerdictConfidence
-): DimensionVerdict {
-  if (!candidate) return fallback;
-  return {
-    verdict: cleanText(candidate.verdict, fallback.verdict, 520),
-    confidence: capVerdictConfidence(isVerdictConfidence(candidate.confidence) ? candidate.confidence : fallback.confidence, confidenceCapValue),
-    evidence_type: isVerdictEvidenceType(candidate.evidence_type) ? candidate.evidence_type : fallback.evidence_type
-  };
-}
-
 function capVerdictConfidence(value: VerdictConfidence, cap: VerdictConfidence): VerdictConfidence {
   const rank = { low: 0, medium: 1, high: 2 };
   return rank[value] > rank[cap] ? cap : value;
@@ -2714,7 +2451,6 @@ function readQualityCheckEnv(env: Env): QualityCheckEnv {
     openaiApiKey: env.OPENAI_API_KEY || null,
     visionModel: env.QUALITY_CHECK_VISION_MODEL || DEFAULT_VISION_MODEL,
     coreModel: env.QUALITY_CHECK_CORE_MODEL || DEFAULT_CORE_MODEL,
-    premiumFallbackModel: env.QUALITY_CHECK_PREMIUM_FALLBACK_MODEL || DEFAULT_PREMIUM_FALLBACK_MODEL,
     embeddingModel: env.QUALITY_CHECK_EMBEDDING_MODEL || DEFAULT_EMBEDDING_MODEL,
     publicEvidenceSearchEnabled: env.QUALITY_CHECK_PUBLIC_EVIDENCE_SEARCH !== "disabled"
   };

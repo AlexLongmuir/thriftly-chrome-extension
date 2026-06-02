@@ -250,8 +250,8 @@ function HowItWorksPage({ onBack }: { onBack: () => void }) {
     {
       title: "Generate Shopper Verdict",
       body:
-        "Gpt-5.4-Mini writes a strict structured verdict inside deterministic scoring guardrails, with Gpt-5.4 available for premium evaluation and fallback. The output becomes quality, value, durability, style, confidence, recommendation, good signs, watch-outs and a short decision summary a shopper can actually use.",
-      chips: ["Gpt-5.4-Mini", "Structured Json", "Score Guardrails"]
+        "Gpt-5.4-Mini generates the quality, value, durability, style, confidence, recommendation, good signs, watch-outs and short decision summary from the evidence packet. The backend validates the structure, ranges, evidence discipline and visual-claim safety rules before showing the result.",
+      chips: ["Gpt-5.4-Mini", "Structured Json", "Backend Validation"]
     },
     {
       title: "Retrieve Better Alternatives",
