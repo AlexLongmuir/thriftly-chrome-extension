@@ -124,6 +124,11 @@ type Stage6Context = {
   fetcher: Fetcher;
 };
 
+type VisualEnrichmentBuildResult = {
+  visualResult: BackendAnalysis["visual_enrichment"];
+  timings: Partial<BackendAnalysis["timings_ms"]>;
+};
+
 type EvidencePack = {
   pageEvidence: PageEvidenceItem[];
   externalEvidence: ExternalEvidenceItem[];
@@ -143,38 +148,39 @@ type EvidencePack = {
   externalSearchAttempted: boolean;
   diagnostics: string[];
   agentPack: ExternalEvidenceAgentPack;
+  timings?: Partial<BackendAnalysis["timings_ms"]>;
 };
 
 const APPROVED_EXAMPLES: MatchedApprovedExample[] = [
-  example("approved_merino_knit_mid_premium_001", "knitwear", "wool", "mid-premium", "£80-£150", [7.8, 7.8, 7.0, 7.5, 0.86], "worth_buying", "COS", "Pure Cashmere Jumper", "£135", "https://www.cos.com/"),
-  example("approved_cashmere_knit_luxury_001", "knitwear", "wool", "luxury", "£600+", [8.8, 4.8, 6.8, 8.7, 0.84], "poor_value", "Mr Porter", "Cashmere Sweater", "£695", "https://www.mrporter.com/"),
-  example("approved_wool_blend_knit_high_street_001", "knitwear", "blend", "high-street", "£40-£90", [6.4, 6.8, 6.0, 6.5, 0.78], "consider", "ARKET", "Wool Blend Jumper", "£77", "https://www.arket.com/"),
-  example("approved_acrylic_knit_budget_001", "knitwear", "synthetic", "budget", "under £40", [4.4, 5.4, 4.8, 5.2, 0.74], "skip", "H&M", "Rib-Knit Jumper", "£24.99", "https://www2.hm.com/"),
-  example("approved_linen_shirt_mid_premium_001", "shirt", "linen", "mid-premium", "£60-£120", [7.2, 7.1, 6.6, 7.4, 0.82], "worth_buying", "ARKET", "Relaxed Linen Shirt", "£67", "https://www.arket.com/"),
-  example("approved_cotton_linen_shirt_high_street_001", "shirt", "blend", "high-street", "£30-£70", [6.4, 7.0, 6.2, 6.6, 0.78], "consider", "Zara", "Cotton-Linen Shirt", "£45.99", "https://www.zara.com/"),
-  example("approved_cotton_shirt_budget_001", "shirt", "cotton", "budget", "under £30", [5.4, 6.2, 5.6, 5.4, 0.76], "consider", "Uniqlo", "Oxford Shirt", "£29.90", "https://www.uniqlo.com/"),
-  example("approved_synthetic_shirt_high_street_001", "shirt", "synthetic", "high-street", "£30-£60", [4.8, 4.8, 5.0, 5.8, 0.72], "skip", "Mango", "Regular-Fit Shirt", "£35.99", "https://shop.mango.com/"),
-  example("approved_leather_trainers_high_street_001", "footwear", "leather", "high-street", "£40-£90", [6.4, 7.0, 6.3, 6.2, 0.78], "consider", "M&S", "Leather Lace-Up Trainers", "£49.50", "https://www.marksandspencer.com/"),
-  example("approved_leather_trainers_premium_001", "footwear", "leather", "premium", "£100-£220", [7.4, 6.3, 7.0, 7.1, 0.8], "consider", "Veja", "Campo Leather Trainers", "£130", "https://www.veja-store.com/"),
-  example("approved_synthetic_trainers_budget_001", "footwear", "synthetic", "budget", "under £50", [4.8, 5.5, 4.9, 5.5, 0.7], "skip", "H&M", "Canvas Trainers", "£24.99", "https://www2.hm.com/"),
-  example("approved_leather_jacket_premium_001", "outerwear", "leather", "premium", "£250-£600", [7.5, 6.4, 7.2, 7.8, 0.78], "consider", "AllSaints", "Miller Leather Jacket", "£349", "https://www.allsaints.com/"),
-  example("approved_leather_jacket_luxury_001", "outerwear", "leather", "luxury", "£1200+", [8.2, 4.2, 7.4, 8.6, 0.72], "poor_value", "Celine", "Leather Biker Jacket", "£3,200", "https://www.celine.com/"),
-  example("approved_poly_fleece_premium_001", "outerwear", "synthetic", "premium", "£80-£150", [6.8, 7.0, 7.2, 6.1, 0.82], "consider", "Patagonia", "Micro D Fleece Jacket", "£80", "https://www.patagonia.com/"),
-  example("approved_recycled_fleece_premium_001", "outerwear", "synthetic", "premium", "£120-£220", [7.0, 6.6, 7.3, 6.6, 0.82], "consider", "Patagonia", "Better Sweater Jacket", "£130", "https://www.patagonia.com/"),
-  example("approved_blazer_high_street_001", "outerwear", "blend", "high-street", "£50-£120", [5.8, 6.1, 5.7, 6.3, 0.74], "consider", "Next", "Textured Blazer", "£74", "https://www.next.co.uk/"),
-  example("approved_denim_high_street_001", "denim", "cotton", "high-street", "£35-£80", [6.2, 6.8, 6.5, 6.1, 0.8], "consider", "Uniqlo", "Regular Fit Jeans", "£39.90", "https://www.uniqlo.com/"),
-  example("approved_denim_premium_001", "denim", "cotton", "premium", "£120-£250", [7.4, 6.0, 7.2, 7.0, 0.82], "consider", "A.P.C.", "Petit Standard Jeans", "£190", "https://www.apcstore.com/"),
-  example("approved_tshirt_cotton_budget_001", "t-shirt", "cotton", "budget", "under £20", [5.2, 6.5, 5.0, 5.2, 0.78], "consider", "Uniqlo", "Supima Cotton T-Shirt", "£14.90", "https://www.uniqlo.com/"),
-  example("approved_tshirt_premium_cotton_001", "t-shirt", "cotton", "premium", "£40-£90", [6.8, 5.4, 6.2, 6.8, 0.8], "consider", "Sunspel", "Classic Cotton T-Shirt", "£75", "https://www.sunspel.com/"),
-  example("approved_trousers_wool_mid_premium_001", "trousers", "wool", "mid-premium", "£90-£180", [7.4, 6.8, 7.0, 7.2, 0.8], "worth_buying", "COS", "Tailored Wool Trousers", "£135", "https://www.cos.com/"),
-  example("approved_trousers_synthetic_high_street_001", "trousers", "synthetic", "high-street", "£30-£80", [5.4, 6.0, 5.7, 5.9, 0.76], "consider", "Zara", "Technical Trousers", "£45.99", "https://www.zara.com/"),
-  example("approved_bag_leather_premium_001", "bag", "leather", "premium", "£180-£450", [7.6, 6.4, 7.6, 7.5, 0.78], "consider", "Coach", "Leather Tote Bag", "£295", "https://uk.coach.com/"),
-  example("approved_bag_synthetic_budget_001", "bag", "synthetic", "budget", "under £50", [4.8, 5.8, 5.0, 5.2, 0.72], "skip", "H&M", "Shopper Bag", "£19.99", "https://www2.hm.com/"),
-  example("approved_dress_viscose_high_street_001", "dress", "viscose", "high-street", "£40-£100", [5.8, 6.4, 5.4, 6.8, 0.76], "consider", "Mango", "Viscose Shirt Dress", "£59.99", "https://shop.mango.com/"),
-  example("approved_dress_silk_premium_001", "dress", "silk", "premium", "£180-£450", [7.8, 6.3, 6.2, 8.0, 0.78], "consider", "Reformation", "Silk Dress", "£278", "https://www.thereformation.com/"),
-  example("approved_skirt_wool_mid_premium_001", "skirt", "wool", "mid-premium", "£80-£180", [7.2, 6.7, 6.8, 7.2, 0.78], "consider", "ARKET", "Wool A-Line Skirt", "£119", "https://www.arket.com/"),
-  example("approved_activewear_synthetic_premium_001", "activewear", "synthetic", "premium", "£60-£150", [6.8, 6.7, 7.4, 6.2, 0.8], "consider", "Patagonia", "Performance Joggers", "£85", "https://www.patagonia.com/"),
-  example("approved_accessory_leather_high_street_001", "accessory", "leather", "high-street", "£20-£80", [6.0, 6.8, 6.1, 6.0, 0.76], "consider", "M&S", "Leather Belt", "£25", "https://www.marksandspencer.com/"),
+  example("approved_merino_knit_mid_premium_001", "knitwear", "wool", "mid-premium", "£80-£150", [8.6, 8.8, 8.0, 8.4, 0.86], "worth_buying", "COS", "Pure Merino Jumper", "£135", "https://www.cos.com/"),
+  example("approved_cashmere_knit_luxury_001", "knitwear", "wool", "luxury", "£600+", [8.8, 4.4, 7.0, 8.7, 0.84], "poor_value", "Mr Porter", "Cashmere Sweater", "£695", "https://www.mrporter.com/"),
+  example("approved_wool_blend_knit_high_street_001", "knitwear", "blend", "high-street", "£40-£90", [6.4, 6.6, 6.0, 6.5, 0.78], "consider", "ARKET", "Wool Blend Jumper", "£77", "https://www.arket.com/"),
+  example("approved_acrylic_knit_budget_001", "knitwear", "synthetic", "budget", "under £40", [3.8, 4.8, 4.2, 5.1, 0.74], "skip", "H&M", "Rib-Knit Jumper", "£24.99", "https://www2.hm.com/"),
+  example("approved_linen_shirt_mid_premium_001", "shirt", "linen", "mid-premium", "£60-£120", [8.8, 9.0, 7.8, 8.6, 0.84], "worth_buying", "ARKET", "Relaxed Linen Shirt", "£67", "https://www.arket.com/"),
+  example("approved_cotton_linen_shirt_high_street_001", "shirt", "blend", "high-street", "£30-£70", [6.8, 7.2, 6.4, 6.8, 0.78], "consider", "Zara", "Cotton-Linen Shirt", "£45.99", "https://www.zara.com/"),
+  example("approved_cotton_shirt_budget_001", "shirt", "cotton", "budget", "under £30", [6.2, 7.8, 6.2, 6.0, 0.76], "consider", "Uniqlo", "Oxford Shirt", "£29.90", "https://www.uniqlo.com/"),
+  example("approved_synthetic_shirt_high_street_001", "shirt", "synthetic", "high-street", "£80-£140", [4.4, 3.8, 4.6, 5.9, 0.72], "poor_value", "Mango", "Premium Synthetic Shirt", "£95", "https://shop.mango.com/"),
+  example("approved_leather_trainers_high_street_001", "footwear", "leather", "high-street", "£40-£90", [6.8, 7.6, 6.8, 6.4, 0.78], "consider", "M&S", "Leather Lace-Up Trainers", "£49.50", "https://www.marksandspencer.com/"),
+  example("approved_leather_trainers_premium_001", "footwear", "leather", "premium", "£100-£220", [7.6, 6.8, 7.3, 7.2, 0.8], "consider", "Veja", "Campo Leather Trainers", "£130", "https://www.veja-store.com/"),
+  example("approved_synthetic_trainers_budget_001", "footwear", "synthetic", "budget", "under £50", [4.6, 5.2, 4.6, 5.5, 0.7], "skip", "H&M", "Canvas Trainers", "£24.99", "https://www2.hm.com/"),
+  example("approved_leather_jacket_premium_001", "outerwear", "leather", "premium", "£250-£600", [7.8, 6.8, 7.5, 8.1, 0.78], "consider", "AllSaints", "Miller Leather Jacket", "£349", "https://www.allsaints.com/"),
+  example("approved_leather_jacket_luxury_001", "outerwear", "leather", "luxury", "£1200+", [8.4, 3.8, 7.6, 8.8, 0.72], "poor_value", "Celine", "Leather Biker Jacket", "£3,200", "https://www.celine.com/"),
+  example("approved_poly_fleece_premium_001", "outerwear", "synthetic", "premium", "£80-£150", [7.2, 8.3, 7.6, 6.4, 0.82], "worth_buying", "Patagonia", "Micro D Fleece Jacket", "£80", "https://www.patagonia.com/"),
+  example("approved_recycled_fleece_premium_001", "outerwear", "synthetic", "premium", "£120-£220", [7.5, 7.8, 7.8, 6.9, 0.82], "worth_buying", "Patagonia", "Better Sweater Jacket", "£130", "https://www.patagonia.com/"),
+  example("approved_blazer_high_street_001", "outerwear", "blend", "high-street", "£50-£120", [5.4, 5.6, 5.3, 6.2, 0.74], "consider", "Next", "Textured Blazer", "£74", "https://www.next.co.uk/"),
+  example("approved_denim_high_street_001", "denim", "cotton", "high-street", "£35-£80", [6.5, 7.5, 6.9, 6.2, 0.8], "consider", "Uniqlo", "Regular Fit Jeans", "£39.90", "https://www.uniqlo.com/"),
+  example("approved_denim_premium_001", "denim", "cotton", "premium", "£120-£250", [7.7, 5.8, 7.6, 7.2, 0.82], "consider", "A.P.C.", "Petit Standard Jeans", "£190", "https://www.apcstore.com/"),
+  example("approved_tshirt_cotton_budget_001", "t-shirt", "cotton", "budget", "under £20", [6.0, 8.4, 5.8, 5.8, 0.78], "consider", "Uniqlo", "Supima Cotton T-Shirt", "£14.90", "https://www.uniqlo.com/"),
+  example("approved_tshirt_premium_cotton_001", "t-shirt", "cotton", "premium", "£40-£90", [7.0, 5.2, 6.5, 7.0, 0.8], "consider", "Sunspel", "Classic Cotton T-Shirt", "£75", "https://www.sunspel.com/"),
+  example("approved_trousers_wool_mid_premium_001", "trousers", "wool", "mid-premium", "£90-£180", [8.6, 8.8, 8.3, 8.2, 0.82], "worth_buying", "COS", "Tailored Wool Trousers", "£135", "https://www.cos.com/"),
+  example("approved_trousers_synthetic_high_street_001", "trousers", "synthetic", "high-street", "£30-£80", [5.0, 5.4, 5.2, 5.8, 0.76], "consider", "Zara", "Technical Trousers", "£45.99", "https://www.zara.com/"),
+  example("approved_bag_leather_premium_001", "bag", "leather", "premium", "£180-£450", [7.8, 6.8, 7.8, 7.6, 0.78], "consider", "Coach", "Leather Tote Bag", "£295", "https://uk.coach.com/"),
+  example("approved_bag_synthetic_budget_001", "bag", "synthetic", "budget", "under £50", [4.4, 5.2, 4.7, 5.1, 0.72], "skip", "H&M", "Shopper Bag", "£19.99", "https://www2.hm.com/"),
+  example("approved_dress_viscose_high_street_001", "dress", "viscose", "high-street", "£40-£100", [5.8, 6.2, 5.3, 6.9, 0.76], "consider", "Mango", "Viscose Shirt Dress", "£59.99", "https://shop.mango.com/"),
+  example("approved_dress_silk_premium_001", "dress", "silk", "premium", "£180-£450", [8.2, 6.8, 6.5, 8.3, 0.78], "worth_buying", "Reformation", "Silk Dress", "£278", "https://www.thereformation.com/"),
+  example("approved_skirt_wool_mid_premium_001", "skirt", "wool", "mid-premium", "£80-£180", [7.6, 7.3, 7.2, 7.4, 0.78], "worth_buying", "ARKET", "Wool A-Line Skirt", "£119", "https://www.arket.com/"),
+  example("approved_activewear_synthetic_premium_001", "activewear", "synthetic", "premium", "£60-£150", [7.2, 7.4, 8.0, 6.4, 0.8], "worth_buying", "Patagonia", "Performance Joggers", "£85", "https://www.patagonia.com/"),
+  example("approved_accessory_leather_high_street_001", "accessory", "leather", "high-street", "£20-£80", [6.2, 7.6, 6.4, 6.1, 0.76], "consider", "M&S", "Leather Belt", "£25", "https://www.marksandspencer.com/"),
   example("approved_unknown_thin_page_001", "other", "unknown", "unknown", "unknown", [2.8, 2.8, 2.8, 2.8, 0.2], "cant_assess", "", "", "", "")
 ];
 
@@ -208,70 +214,36 @@ export async function handleQualityCheckPayload(
   body: unknown,
   dependencies: QualityCheckDependencies = {}
 ): Promise<BackendVerdict> {
+  const totalStartedAt = nowMs();
   const payload = validateStage5Payload(body);
   const env = readQualityCheckEnv(dependencies.env || process.env);
-  const warnings = [...payload.visual_enrichment.warnings];
-  const observations: VisualObservation[] = [];
-  const visualCues: VisualCue[] = [];
-  const expertInferences: ExpertVisualInference[] = [];
-  const missingViews = [...payload.visual_enrichment.missing_views];
-  const imageQualityLimits = [...payload.visual_enrichment.image_quality_limits];
-
-  const imageUrls = normaliseImageUrls(payload);
-  if (imageUrls.length === 0) {
-    warnings.push("visual enrichment skipped: product images not found");
-  } else if (payload.visual_enrichment.status !== "requested") {
-    warnings.push("visual enrichment skipped: extension payload did not request vision analysis");
-  } else if (!env.geminiApiKey) {
-    warnings.push("visual enrichment skipped: GEMINI_API_KEY is not configured");
-  } else {
-    const downloaded = await downloadImages(imageUrls, dependencies.fetcher || fetch, warnings);
-
-    if (downloaded.length === 0) {
-      warnings.push("visual enrichment skipped: no usable images could be fetched");
-    } else {
-      const modelResult = await runGeminiVision({
-        apiKey: env.geminiApiKey,
-        model: env.visionModel,
-        prompt: payload.visual_enrichment.prompt || buildFallbackPrompt(),
-        images: downloaded,
-        fetcher: dependencies.fetcher || fetch
-      });
-      const cleanObservations = sanitiseVisualObservations(modelResult.observations);
-      const cleanCues = sanitiseVisualCues(modelResult.visual_cues);
-      const cleanInferences = sanitiseExpertVisualInferences(modelResult.expert_inferences);
-      observations.push(...cleanObservations.observations);
-      visualCues.push(...cleanCues.visual_cues);
-      expertInferences.push(...cleanInferences.expert_inferences);
-      missingViews.push(...modelResult.missing_views);
-      imageQualityLimits.push(...modelResult.image_quality_limits);
-      warnings.push(...cleanObservations.warnings, ...cleanCues.warnings, ...cleanInferences.warnings);
-    }
-  }
-
+  const fetcher = dependencies.fetcher || fetch;
   const title = String(payload.page.product.fields.title.value || payload.page.title || "Untitled page");
-  const visualCompleted = observations.length > 0 || visualCues.length > 0 || expertInferences.length > 0;
-  const visualResult = {
-    status: visualCompleted ? ("completed" as const) : ("skipped" as const),
-    model: env.visionModel,
-    image_count: imageUrls.length,
-    observations,
-    visual_cues: visualCues,
-    expert_inferences: expertInferences,
-    missing_views: uniqueStrings(missingViews).slice(0, 8),
-    image_quality_limits: uniqueStrings(imageQualityLimits).slice(0, 8),
-    warnings: uniqueStrings(warnings)
-  };
   const matchedExamples = retrieveApprovedExamples(payload.classification);
-  const evidencePack = await gatherEvidencePack(payload, env, dependencies.fetcher || fetch);
-  const verdict = await createStage6Verdict({
+  const visualPromise = buildVisualEnrichmentResult(payload, env, fetcher);
+  const evidencePromise = measureAsync(() => gatherEvidencePack(payload, env, fetcher), "external_evidence");
+  const [visualBuild, evidenceBuild] = await Promise.all([visualPromise, evidencePromise]);
+  const visualResult = visualBuild.visualResult;
+  const evidencePack = evidenceBuild.value;
+  const verdictBuild = await measureAsync(() => createStage6Verdict({
     payload,
     evidencePack,
     visual: visualResult,
     matchedExamples,
     env,
-    fetcher: dependencies.fetcher || fetch
-  });
+    fetcher
+  }), "stage6_verdict");
+  const verdict = verdictBuild.value;
+  const timings: BackendAnalysis["timings_ms"] = {
+    total_backend: 0,
+    visual_enrichment: visualBuild.timings.visual_enrichment ?? 0,
+    external_evidence: evidenceBuild.timings.external_evidence ?? 0,
+    stage6_verdict: verdictBuild.timings.stage6_verdict ?? 0,
+    ...optionalTiming("image_download", visualBuild.timings.image_download),
+    ...optionalTiming("gemini_vision", visualBuild.timings.gemini_vision),
+    ...optionalTiming("ai_evidence_agent", evidencePack.timings?.ai_evidence_agent)
+  };
+  timings.total_backend = elapsedMs(totalStartedAt);
   const analysis: BackendAnalysis = {
     stage: "stage_6",
     status: payload.page.product.page_state === "product_page" ? "completed" : "skipped",
@@ -302,6 +274,7 @@ export async function handleQualityCheckPayload(
     visual_enrichment: visualResult,
     verdict,
     approved_examples: matchedExamples,
+    timings_ms: timings,
     model_config: {
       vision_model: env.visionModel,
       core_model: env.coreModel,
@@ -317,6 +290,79 @@ export async function handleQualityCheckPayload(
     source: "backend",
     capturedTitle: title,
     analysis
+  };
+}
+
+async function buildVisualEnrichmentResult(payload: BackendPayload, env: QualityCheckEnv, fetcher: Fetcher): Promise<VisualEnrichmentBuildResult> {
+  const result = await measureAsync(async () => {
+    const warnings = [...payload.visual_enrichment.warnings];
+    const observations: VisualObservation[] = [];
+    const visualCues: VisualCue[] = [];
+    const expertInferences: ExpertVisualInference[] = [];
+    const missingViews = [...payload.visual_enrichment.missing_views];
+    const imageQualityLimits = [...payload.visual_enrichment.image_quality_limits];
+    const timings: Partial<BackendAnalysis["timings_ms"]> = {};
+
+    const imageUrls = normaliseImageUrls(payload);
+    if (imageUrls.length === 0) {
+      warnings.push("visual enrichment skipped: product images not found");
+    } else if (payload.visual_enrichment.status !== "requested") {
+      warnings.push("visual enrichment skipped: extension payload did not request vision analysis");
+    } else if (!env.geminiApiKey) {
+      warnings.push("visual enrichment skipped: GEMINI_API_KEY is not configured");
+    } else {
+      const geminiApiKey = env.geminiApiKey;
+      const downloadedBuild = await measureAsync(() => downloadImages(imageUrls, fetcher, warnings), "image_download");
+      timings.image_download = downloadedBuild.timings.image_download;
+      const downloaded = downloadedBuild.value;
+
+      if (downloaded.length === 0) {
+        warnings.push("visual enrichment skipped: no usable images could be fetched");
+      } else {
+        const modelBuild = await measureAsync(() => runGeminiVision({
+          apiKey: geminiApiKey,
+          model: env.visionModel,
+          prompt: payload.visual_enrichment.prompt || buildFallbackPrompt(),
+          images: downloaded,
+          fetcher
+        }), "gemini_vision");
+        timings.gemini_vision = modelBuild.timings.gemini_vision;
+        const modelResult = modelBuild.value;
+        const cleanObservations = sanitiseVisualObservations(modelResult.observations);
+        const cleanCues = sanitiseVisualCues(modelResult.visual_cues);
+        const cleanInferences = sanitiseExpertVisualInferences(modelResult.expert_inferences);
+        observations.push(...cleanObservations.observations);
+        visualCues.push(...cleanCues.visual_cues);
+        expertInferences.push(...cleanInferences.expert_inferences);
+        missingViews.push(...modelResult.missing_views);
+        imageQualityLimits.push(...modelResult.image_quality_limits);
+        warnings.push(...cleanObservations.warnings, ...cleanCues.warnings, ...cleanInferences.warnings);
+      }
+    }
+
+    const visualCompleted = observations.length > 0 || visualCues.length > 0 || expertInferences.length > 0;
+    return {
+      visualResult: {
+        status: visualCompleted ? ("completed" as const) : ("skipped" as const),
+        model: env.visionModel,
+        image_count: imageUrls.length,
+        observations,
+        visual_cues: visualCues,
+        expert_inferences: expertInferences,
+        missing_views: uniqueStrings(missingViews).slice(0, 8),
+        image_quality_limits: uniqueStrings(imageQualityLimits).slice(0, 8),
+        warnings: uniqueStrings(warnings)
+      },
+      timings
+    };
+  }, "visual_enrichment");
+
+  return {
+    visualResult: result.value.visualResult,
+    timings: {
+      ...result.value.timings,
+      visual_enrichment: result.timings.visual_enrichment
+    }
   };
 }
 
@@ -390,7 +436,9 @@ function normaliseAiStage6Verdict(candidate: Partial<Stage6Verdict>, context: St
     confidence: confidenceSafeScore(requiredScore(candidate.scores?.confidence, "confidence", 1), context)
   };
   const overall = deriveOverall(scores);
-  const recommendation = recommendationForEvidenceGate(context, scores) || safeRecommendationForConfidence(requiredRecommendation(candidate.recommendation), scores, context);
+  const recommendation =
+    recommendationForEvidenceGate(context, scores) ||
+    normaliseRecommendationConsistency(safeRecommendationForConfidence(requiredRecommendation(candidate.recommendation), scores, context), scores, context);
   const confidenceLabel = verdictConfidence(scores.confidence);
 
   const baseVerdict: Stage6Verdict = {
@@ -458,6 +506,27 @@ function safeRecommendationForConfidence(recommendation: Recommendation, scores:
     return "consider";
   }
   return recommendation;
+}
+
+function normaliseRecommendationConsistency(recommendation: Recommendation, scores: VerdictScores, context: Stage6Context): Recommendation {
+  const overall = deriveOverall(scores);
+  if (recommendation === "consider" && overall >= 8 && scores.confidence >= 0.45 && !hasConcretePurchaseBlocker(context, scores)) return "worth_buying";
+  if ((recommendation === "excellent_pick" || recommendation === "worth_buying" || recommendation === "consider") && scores.value < 5.2) {
+    return scores.quality >= 5.8 ? "poor_value" : "skip";
+  }
+  if ((recommendation === "excellent_pick" || recommendation === "worth_buying") && overall < 5.5) return "skip";
+  return recommendation;
+}
+
+function hasConcretePurchaseBlocker(context: Stage6Context, scores: VerdictScores): boolean {
+  return Boolean(
+    scores.value < 6.2 ||
+      scores.quality < 6.2 ||
+      scores.durability < 5.8 ||
+      syntheticPriceLooksHigh(context.payload.classification) ||
+      context.payload.classification.quality_concerns.some((concern) => !/^unknown:/i.test(concern)) ||
+      context.evidencePack.conflictingEvidence.length > 0
+  );
 }
 
 function hasMaterialDecisionGaps(context: Stage6Context): boolean {
@@ -1109,7 +1178,8 @@ async function gatherEvidencePack(payload: BackendPayload, env: QualityCheckEnv,
     };
   }
 
-  const agentPack = await runAIEvidenceAgent(payload, env, fetcher, diagnostics);
+  const agentBuild = await measureAsync(() => runAIEvidenceAgent(payload, env, fetcher, diagnostics), "ai_evidence_agent");
+  const agentPack = agentBuild.value;
   const evidence = dedupeExternalEvidence(agentPack.evidence);
   const externalEvidence = evidence.filter((item) => !isBenchmarkEvidenceType(item.evidence_type)).slice(0, 8);
   const benchmarkEvidence = evidence.filter((item) => isBenchmarkEvidenceType(item.evidence_type)).slice(0, 6);
@@ -1140,6 +1210,9 @@ async function gatherEvidencePack(payload: BackendPayload, env: QualityCheckEnv,
     crossSourceThemes,
     externalSearchAttempted: true,
     diagnostics: uniqueStrings(diagnostics).slice(0, 16),
+    timings: {
+      ai_evidence_agent: agentBuild.timings.ai_evidence_agent
+    },
     agentPack: {
       ...agentPack,
       key_external_insights: keyExternalInsights,
@@ -2045,11 +2118,15 @@ function buildStage6Instructions(): string {
     "You are Stage 6 of a clothing Quality Check Chrome extension. Write as a clothing-market expert advising a normal shopper.",
     "Return strict JSON only. You own the scores, recommendation, verdicts, and shopper-facing descriptions.",
     "Score quality, value, durability, and aesthetic on a 0-10 scale. Score confidence on a 0-1 scale.",
+    "Use the full score range when evidence supports it. Do not default to 6.0-7.0 just because the item has mixed evidence.",
+    "Score bands: 9.0-10.0 exceptional for the price/category; 8.0-8.9 clearly strong buy; 7.0-7.9 good buy with trade-offs; 6.0-6.9 acceptable or middling; 4.5-5.9 weak, poor value, or only buy for specific reasons; below 4.5 bad buy or cannot responsibly recommend.",
     "Quality rubric: judge material quality, stated composition, construction evidence, finish, and category expectations.",
     "Value rubric: judge price against material, construction, category, brand tier, evidence strength, comparable products, and market context.",
     "Durability rubric: judge material behaviour, care burden, construction evidence, owner/external evidence, and likely wear failure points.",
     "Aesthetic rubric: judge silhouette, proportion, visual refinement, versatility, styling context, and whether the item looks intentional for its lane.",
     "Confidence rubric: judge evidence completeness, source specificity, exact-product support, image limitations, and unresolved evidence gaps.",
+    "Missing evidence should lower confidence and create unverified notes; it should not automatically drag otherwise strong quality/value scores into the middle.",
+    "Be direct when value is weak, synthetic-heavy fabric is priced like a premium natural-fibre item, durability risk is material, or the page is too thin to support a positive call.",
     "recommendation_summary must be one punchy sentence under 90 characters. No second explanatory sentence.",
     "Return only useful shopper signals. It is valid for good_signs, watch_outs, or unverified to be empty.",
     "Use three signal sections: good_signs for evidence-supported positives, watch_outs for genuine concerns or negative evidence, and unverified for missing or unclear information that limits confidence but is not itself negative.",
@@ -2062,7 +2139,7 @@ function buildStage6Instructions(): string {
     "Never use internal/process language in good_signs, watch_outs, or unverified: no product fit evidence, product durability evidence, 100% cotton stated, category anchors, score cannot be pushed, retrieved evidence, based on scraped data, guardrails, backend, source data, or model wording.",
     "Each dimension verdict must explain WHY the score is what it is, not merely restate the product: mention material trade-offs, construction signals expected for the category, market price context, and what prevents a higher score.",
     "For value, judge the observed price against item type, material, cut/styling, construction, durability, reviews, comparable products, market_context, and approved examples. Brand tier can be minor context only, not the core value argument.",
-    "matched_approved_examples are context/comparators only. They are not score anchors, and you do not need to agree with their expected_scores.",
+    "matched_approved_examples are calibration references. Use their expected_scores to understand the scale, then adjust based on the product-specific evidence.",
     "For ratings below 7.0, include at least one concrete limitation. For ratings above 7.0, include why it beats the average and what caveat remains.",
     "Do not use generic filler like 'construction quality cannot be fully verified from images' unless you specify the exact missing evidence, e.g. seam close-up, button attachment, collar/placket structure, lining, sole attachment, stitch regularity, edge finishing.",
     "Do not hard-claim fibre authenticity, exact construction, leather grade, guaranteed build quality, or long-term durability from images.",
@@ -2489,6 +2566,32 @@ function readQualityCheckEnv(env: Env): QualityCheckEnv {
     embeddingModel: env.QUALITY_CHECK_EMBEDDING_MODEL || DEFAULT_EMBEDDING_MODEL,
     publicEvidenceSearchEnabled: env.QUALITY_CHECK_PUBLIC_EVIDENCE_SEARCH !== "disabled"
   };
+}
+
+function nowMs(): number {
+  return performance.now();
+}
+
+function elapsedMs(startedAt: number): number {
+  return Math.max(0, Math.round(performance.now() - startedAt));
+}
+
+async function measureAsync<Key extends keyof BackendAnalysis["timings_ms"], Value>(
+  callback: () => Promise<Value>,
+  key: Key
+): Promise<{ value: Value; timings: Partial<BackendAnalysis["timings_ms"]> }> {
+  const startedAt = nowMs();
+  const value = await callback();
+  return {
+    value,
+    timings: {
+      [key]: elapsedMs(startedAt)
+    } as Partial<BackendAnalysis["timings_ms"]>
+  };
+}
+
+function optionalTiming<Key extends keyof BackendAnalysis["timings_ms"]>(key: Key, value: number | undefined): Partial<BackendAnalysis["timings_ms"]> {
+  return typeof value === "number" && Number.isFinite(value) ? ({ [key]: value } as Partial<BackendAnalysis["timings_ms"]>) : {};
 }
 
 function validateStage5Payload(body: unknown): BackendPayload {

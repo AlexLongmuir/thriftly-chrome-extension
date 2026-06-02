@@ -495,6 +495,16 @@ export type BackendVisualEnrichmentResult = {
   warnings: string[];
 };
 
+export type BackendTimingDiagnostics = {
+  total_backend: number;
+  visual_enrichment: number;
+  external_evidence: number;
+  stage6_verdict: number;
+  image_download?: number;
+  gemini_vision?: number;
+  ai_evidence_agent?: number;
+};
+
 export type BackendAnalysis = {
   stage: "stage_6";
   status: "completed" | "skipped";
@@ -525,6 +535,7 @@ export type BackendAnalysis = {
   visual_enrichment: BackendVisualEnrichmentResult;
   verdict: Stage6Verdict;
   approved_examples: MatchedApprovedExample[];
+  timings_ms: BackendTimingDiagnostics;
   model_config: {
     vision_model: string;
     core_model: string;
