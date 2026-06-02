@@ -98,6 +98,9 @@ function removeWorktree(args) {
   const worktree = findWorktree(target);
   if (!worktree) fail(`No matching worktree found for: ${target}`);
   if (isPrimaryRoot(worktree.path)) fail("Refusing to remove the primary project directory.");
+  if (isProtectedBranch(worktree.branch)) {
+    fail(`Refusing to remove worktree on protected branch ${worktree.branch}. Switch that worktree to a feature branch first.`);
+  }
   if (!isClean(worktree.path) && !options.force) {
     fail(`Worktree is dirty: ${worktree.path}\nCommit, stash, or rerun with --force if you intentionally want to remove it.`);
   }
@@ -124,6 +127,7 @@ function cleanupWorktrees(args) {
   const apply = Boolean(options.apply);
   const candidates = getWorktrees().filter((worktree) => {
     if (isPrimaryRoot(worktree.path)) return false;
+    if (isProtectedBranch(worktree.branch)) return false;
     if (!isManagedWorktreePath(worktree.path)) return false;
     if (!isClean(worktree.path)) return false;
     return isCompletedBranch(worktree.branch);
@@ -286,8 +290,12 @@ function isMergedIntoMain(branch) {
 }
 
 function isCompletedBranch(branch) {
-  if (!branch || branch === "main" || branch === "master") return true;
+  if (!branch || isProtectedBranch(branch)) return true;
   return isMergedIntoMain(branch) || isMergedPullRequestBranch(branch);
+}
+
+function isProtectedBranch(branch) {
+  return branch === "main" || branch === "master";
 }
 
 function isMergedPullRequestBranch(branch) {
