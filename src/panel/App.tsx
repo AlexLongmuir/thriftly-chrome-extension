@@ -77,7 +77,7 @@ export function App() {
   const productImage = extraction?.snapshot.product.imageUrls[0] ?? null;
   const loadingTitle = extractedTitle || "Reading current page";
   const loadingBrand = extraction ? extractedBrand : "Scouted";
-  const loadingPrice = extraction ? extractedPrice : null;
+  const loadingPrice = extraction ? classification?.price || extractedPrice : null;
   const loadingImage = extraction ? productImage : null;
   const lifespan = analysis ? estimateLifespan(analysis.verdict.scores.durability, monthlyWears, analysis.verdict.confidence_label) : null;
   const isChecking = status === "extracting" || status === "sending" || status === "scoring";
@@ -482,7 +482,7 @@ function LoadingState({
         <h2>Analysing this item...</h2>
       </div>
       <div className="tracker-list">
-        <TrackerStep state={stepOneState} number={1} title="Read this page" body={status === "extracting" ? "Extracting material, price and care signals." : signalLine} />
+        <TrackerStep state={stepOneState} number={1} title="Read this page" body={status === "extracting" ? "Extracting category, material and price signals." : signalLine} />
         <TrackerStep state={stepTwoState} number={2} title="Gathering the evidence" body="Checking reviews, forums and comparable shirts..." />
         <TrackerStep state={stepThreeState} number={3} title="Scoring & writing the verdict" body="Good signs, watch-outs and a buy call." />
       </div>
@@ -885,7 +885,7 @@ function AlternativeRow({ alternative }: { alternative: AlternativeItem }) {
 }
 
 function HowScoresSection({ verdict }: { verdict: Stage6Verdict }) {
-  const [openCategory, setOpenCategory] = useState("Quality");
+  const [openCategory, setOpenCategory] = useState<string | null>("Quality");
   const rows = [
     { title: "Quality", score: verdict.scores.quality, verdict: verdict.verdicts.quality },
     { title: "Value", score: verdict.scores.value, verdict: verdict.verdicts.value },
@@ -904,10 +904,10 @@ function HowScoresSection({ verdict }: { verdict: Stage6Verdict }) {
           const isOpen = openCategory === row.title;
           return (
             <div className={`score-card${isOpen ? " score-card--open" : ""}`} key={row.title}>
-              <button className="score-card-head" type="button" onClick={() => setOpenCategory(row.title)} aria-expanded={isOpen}>
+              <button className="score-card-head" type="button" onClick={() => setOpenCategory(isOpen ? null : row.title)} aria-expanded={isOpen}>
                 <span>{row.title}</span>
                 <strong>{score}<small>/100</small></strong>
-                {isOpen ? <ChevronDownIcon /> : null}
+                <ChevronDownIcon />
               </button>
               <div className="score-card-body" aria-hidden={!isOpen}>
                 <Meter value={score} max={100} />
@@ -1249,9 +1249,20 @@ function recommendationLabel(recommendation: Recommendation): string {
 }
 
 function loadingSignalLine(classification: ProductClassification, price: string | null): string {
-  const material = classification.material_family !== "unknown" ? toTitleCase(formatLabel(classification.material_family)) : null;
-  const details = [material, price, classification.material_description ? "care label found" : null].filter(Boolean);
-  return details.length ? `${details.join(", ")}.` : "Material, price and care signals captured.";
+  const category = classification.category !== "other" ? toTitleCase(formatLabel(classification.category)) : null;
+  const material = loadingMaterialFact(classification);
+  const details = [category, material, price].filter(Boolean);
+  return details.length ? `${details.join(", ")}.` : "Product details picked up from this page.";
+}
+
+function loadingMaterialFact(classification: ProductClassification): string | null {
+  if (classification.material_description) return stripTrailingPunctuation(classification.material_description);
+  if (classification.material_family !== "unknown") return toTitleCase(formatLabel(classification.material_family));
+  return null;
+}
+
+function stripTrailingPunctuation(value: string): string {
+  return value.trim().replace(/[.,;:]+$/, "");
 }
 
 function waitForLoadingStepAcknowledgement(): Promise<void> {
