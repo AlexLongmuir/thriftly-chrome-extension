@@ -480,7 +480,7 @@ export type Stage6Verdict = {
   evidence_score_effects: string[];
   summary: string;
   model: string;
-  model_status: "model_completed" | "heuristic_fallback" | "model_unavailable";
+  model_status: "model_completed" | "model_unavailable";
 };
 
 export type BackendVisualEnrichmentResult = {

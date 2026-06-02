@@ -221,10 +221,6 @@ export async function handleQualityCheckPayload(
   const missingViews = [...payload.visual_enrichment.missing_views];
   const imageQualityLimits = [...payload.visual_enrichment.image_quality_limits];
 
-  if (!env.openaiApiKey) {
-    warnings.push("OPENAI_API_KEY is not configured; Stage 6 core analysis is disabled.");
-  }
-
   const imageUrls = normaliseImageUrls(payload);
   if (imageUrls.length === 0) {
     warnings.push("visual enrichment skipped: product images not found");
@@ -330,18 +326,13 @@ export async function handleQualityCheckPayload(
 }
 
 async function createStage6Verdict(context: Stage6Context): Promise<Stage6Verdict> {
-  const fallback = createHeuristicVerdict(context, context.env.openaiApiKey ? "model_unavailable" : "heuristic_fallback");
-  if (!context.env.openaiApiKey) return fallback;
-
-  try {
-    const modelVerdict = await runOpenAIVerdict(context, fallback);
-    return sanitiseStage6Verdict(modelVerdict, fallback, context);
-  } catch (error) {
-    context.visual.warnings.push(
-      `Stage 6 core analysis fell back to deterministic scoring: ${error instanceof Error ? error.message : "unknown error"}`
-    );
-    return fallback;
+  if (!context.env.openaiApiKey) {
+    throw new RequestError(503, "OPENAI_API_KEY is not configured; Stage 6 core analysis is unavailable.");
   }
+
+  const baseline = createHeuristicVerdict(context, "model_unavailable");
+  const modelVerdict = await runOpenAIVerdict(context, baseline);
+  return sanitiseStage6Verdict(modelVerdict, baseline, context);
 }
 
 async function runOpenAIVerdict(context: Stage6Context, fallback: Stage6Verdict): Promise<Partial<Stage6Verdict>> {
@@ -376,7 +367,24 @@ async function runOpenAIVerdict(context: Stage6Context, fallback: Stage6Verdict)
     data.output_text ||
     data.output?.flatMap((item) => item.content || []).find((content) => content.type === "output_text" && content.text)?.text ||
     "{}";
-  return parseModelJson(text) as Partial<Stage6Verdict>;
+  const parsed = parseModelJson(text) as Partial<Stage6Verdict>;
+  assertUsableStage6ModelOutput(parsed);
+  return parsed;
+}
+
+function assertUsableStage6ModelOutput(value: Partial<Stage6Verdict>): void {
+  if (!value || typeof value !== "object") {
+    throw new RequestError(502, "OpenAI verdict response was not valid JSON.");
+  }
+  if (!value.scores || typeof value.scores !== "object") {
+    throw new RequestError(502, "OpenAI verdict response was missing scores.");
+  }
+  if (!value.verdicts || typeof value.verdicts !== "object") {
+    throw new RequestError(502, "OpenAI verdict response was missing dimension verdicts.");
+  }
+  if (!Array.isArray(value.good_signs) || !Array.isArray(value.watch_outs) || !Array.isArray(value.unverified)) {
+    throw new RequestError(502, "OpenAI verdict response was missing shopper signal sections.");
+  }
 }
 
 function createHeuristicVerdict(context: Stage6Context, status: Stage6Verdict["model_status"]): Stage6Verdict {
@@ -426,7 +434,7 @@ function createHeuristicVerdict(context: Stage6Context, status: Stage6Verdict["m
     model_status: status
   };
 
-  return addShopperSignals(baseVerdict, context);
+  return baseVerdict;
 }
 
 function sanitiseStage6Verdict(
@@ -477,19 +485,16 @@ function sanitiseStage6Verdict(
 }
 
 function addShopperSignals(verdict: Stage6Verdict, context: Stage6Context, candidate?: Partial<Stage6Verdict>): Stage6Verdict {
-  const fallbackGoodSigns = buildGoodSigns(verdict, context);
-  const fallbackWatchOuts = buildWatchOuts(verdict, context);
-  const fallbackUnverified = buildUnverifiedSignals(verdict, context);
-  const modelWatchOuts = validateModelShopperSignals(candidate?.watch_outs, "negative", context);
+  const modelWatchOuts = normaliseModelShopperSignals(candidate?.watch_outs, "negative");
   const modelWatchOutsThatAreUnverified = modelWatchOuts.filter(isUnverifiedShopperSignal);
   return {
     ...verdict,
-    good_signs: mergeUsefulShopperSignals(validateModelShopperSignals(candidate?.good_signs, "positive", context), fallbackGoodSigns),
-    watch_outs: mergeUsefulShopperSignals(modelWatchOuts.filter((item) => !isUnverifiedShopperSignal(item)), fallbackWatchOuts),
-    unverified: mergeUsefulShopperSignals(
-      [...validateModelShopperSignals(candidate?.unverified, "neutral", context), ...modelWatchOutsThatAreUnverified],
-      fallbackUnverified
-    )
+    good_signs: normaliseModelShopperSignals(candidate?.good_signs, "positive"),
+    watch_outs: dedupeShopperSignals(modelWatchOuts.filter((item) => !isUnverifiedShopperSignal(item))).slice(0, SHOPPER_SIGNAL_LIMIT),
+    unverified: dedupeShopperSignals([
+      ...normaliseModelShopperSignals(candidate?.unverified, "neutral"),
+      ...modelWatchOutsThatAreUnverified
+    ]).slice(0, SHOPPER_SIGNAL_LIMIT)
   };
 }
 
@@ -518,21 +523,16 @@ const SHOPPER_SIGNAL_CATEGORIES: ShopperSignalCategory[] = [
 ];
 const SHOPPER_SIGNAL_LIMIT = 4;
 
-const INTERNAL_SIGNAL_LANGUAGE =
-  /\b(?:product fit evidence|product durability evidence|category anchors?|score cannot be pushed|retrieved evidence|based on scraped data|scraped data|backend|model|prompt|schema|stage\s*\d|guardrails?|metric|source data|external source|internal|system|deterministic|heuristic|confidence cap)\b/i;
-const GENERIC_SIGNAL_TITLE =
-  /^(?:quality point|good sign|watch[- ]?out|nice detail|something to note|important point|product evidence|quality evidence|material evidence|durability evidence)$/i;
-
-function validateModelShopperSignals(value: unknown, tone: "positive" | "negative" | "neutral", context: Stage6Context): ShopperSignal[] {
+function normaliseModelShopperSignals(value: unknown, tone: "positive" | "negative" | "neutral"): ShopperSignal[] {
   if (!Array.isArray(value)) return [];
-  const evidenceText = shopperSignalEvidenceText(context);
   const accepted: ShopperSignal[] = [];
 
   for (const item of value) {
     if (accepted.length >= SHOPPER_SIGNAL_LIMIT || !item || typeof item !== "object") continue;
     const record = item as Record<string, unknown>;
     const title = cleanText(record.title, "", 64);
-    const description = twoSentenceText(record.description, "", 320);
+    const description = cleanText(record.description, "", 320);
+    if (!title || !description) continue;
     const category = normaliseShopperSignalCategory(record.category ?? record.evidence_type) ?? inferSignalCategory(`${title} ${description}`, tone);
     const confidence = isVerdictConfidence(record.confidence) ? record.confidence : "medium";
     const signal: ShopperSignal = {
@@ -546,110 +546,29 @@ function validateModelShopperSignals(value: unknown, tone: "positive" | "negativ
       evidence_basis: [basis("category_explanation", "model shopper signal", `${title}: ${description}`)]
     };
 
-    if (!isValidModelShopperSignal(signal, evidenceText)) continue;
-    if (accepted.some((existing) => duplicateSignal(existing, signal))) continue;
+    if (accepted.some((existing) => duplicateSignal(existing, signal) || duplicateSignalCategory(existing, signal))) continue;
     accepted.push(signal);
   }
 
   return accepted;
 }
 
-function mergeUsefulShopperSignals(modelSignals: ShopperSignal[], fallbackSignals: ShopperSignal[]): ShopperSignal[] {
-  const result = [...modelSignals];
-  for (const fallback of fallbackSignals) {
-    if (result.length >= SHOPPER_SIGNAL_LIMIT) break;
-    if (result.some((existing) => duplicateSignal(existing, fallback))) continue;
-    result.push(fallback);
-  }
-  return result.slice(0, SHOPPER_SIGNAL_LIMIT);
-}
-
-function isValidModelShopperSignal(signal: ShopperSignal, evidenceText: string): boolean {
-  const titleWords = signal.label.split(/\s+/).filter(Boolean);
-  if (titleWords.length < 2 || titleWords.length > 5) return false;
-  if (signal.detail.length < 40 || signal.detail.length > 320) return false;
-  if (sentenceCount(signal.detail) > 2) return false;
-  if (INTERNAL_SIGNAL_LANGUAGE.test(`${signal.label} ${signal.detail}`)) return false;
-  if (GENERIC_SIGNAL_TITLE.test(signal.label)) return false;
-  if (!hasSignalEvidenceSupport(signal, evidenceText)) return false;
-  return true;
-}
-
 function sentenceCount(value: string): number {
   return value.match(/[^.!?]+[.!?]+|[^.!?]+$/g)?.filter((item) => item.trim()).length ?? 0;
 }
 
-function hasSignalEvidenceSupport(signal: ShopperSignal, evidenceText: string): boolean {
-  const text = `${signal.label} ${signal.detail}`.toLowerCase();
-  if (/\b(?:unclear|limited|missing|not stated|not shown|not enough|hard to judge|uncertain|cannot verify|not verified)\b/.test(text)) return true;
-  const words = text
-    .replace(/[^a-z0-9£$€.%\s-]/g, " ")
-    .split(/\s+/)
-    .filter((word) => word.length >= 4 && !SIGNAL_SUPPORT_STOP_WORDS.has(word));
-  if (words.some((word) => evidenceText.includes(word))) return true;
-  return Boolean(signal.category && words.length >= 3);
-}
-
 function isUnverifiedShopperSignal(signal: ShopperSignal): boolean {
   const text = `${signal.label} ${signal.detail}`.toLowerCase();
-  if (/\b(?:concerns?|risky|weak|poor|bad|limited breathability|may shrink|inconsistent|expensive|overpriced|questionable|mixed owner|complain|reported)\b/.test(text)) return false;
+  if (/\b(?:concerns?|risky|weak|poor|bad|limited breathability|breathability limited|shrink|inconsistent|expensive|overpriced|questionable|mixed owner|complain|reported)\b/.test(text)) return false;
   return /\b(?:unclear|limited|missing|not stated|not shown|not enough|hard to judge|unknown|unverified|cannot verify|couldn'?t verify|no close-up|without close-up|thin evidence)\b/.test(text);
-}
-
-const SIGNAL_SUPPORT_STOP_WORDS = new Set([
-  "this",
-  "that",
-  "with",
-  "from",
-  "into",
-  "than",
-  "then",
-  "they",
-  "them",
-  "what",
-  "when",
-  "where",
-  "which",
-  "because",
-  "could",
-  "would",
-  "should",
-  "looks",
-  "look",
-  "item",
-  "product",
-  "quality",
-  "value",
-  "fabric",
-  "material",
-  "wear",
-  "feel",
-  "judge",
-  "buying"
-]);
-
-function shopperSignalEvidenceText(context: Stage6Context): string {
-  return [
-    JSON.stringify(context.payload.page.product.fields),
-    context.payload.page.visibleText,
-    context.payload.classification.material_description,
-    context.payload.classification.construction_description,
-    ...context.payload.classification.quality_signals,
-    ...context.payload.classification.quality_concerns,
-    ...context.evidencePack.pageEvidence.map((item) => item.claim),
-    ...context.evidencePack.externalEvidence.map((item) => `${item.claim} ${item.concrete_insight}`),
-    ...context.evidencePack.benchmarkEvidence.map((item) => `${item.claim} ${item.concrete_insight}`),
-    ...context.evidencePack.keyExternalInsights,
-    ...context.evidencePack.evidenceGaps,
-    ...context.visual.visual_cues.map((item) => item.cue),
-    ...context.visual.expert_inferences.map((item) => `${item.inference} ${item.why_it_matters} ${item.caveat}`)
-  ]
-    .join(" ")
-    .toLowerCase();
 }
 
 function duplicateSignal(left: ShopperSignal, right: ShopperSignal): boolean {
   return cleanSignalTitle(left.label).toLowerCase() === cleanSignalTitle(right.label).toLowerCase() || left.detail.toLowerCase() === right.detail.toLowerCase();
+}
+
+function duplicateSignalCategory(left: ShopperSignal, right: ShopperSignal): boolean {
+  return left.category === "value" && right.category === "value";
 }
 
 function isShopperSignalCategory(value: unknown): value is ShopperSignalCategory {

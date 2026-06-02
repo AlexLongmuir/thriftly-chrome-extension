@@ -1,8 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { handleQualityCheckPayload } from "../../api/quality-check";
 import type { BackendPayload, ProductFieldName, ShopperSignal } from "../shared/messages";
 
 describe("quality-check API", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.stubGlobal("fetch", defaultTestFetch);
+  });
+
   it("skips vision safely when product images are missing", async () => {
     const calls: string[] = [];
     const result = await handleQualityCheckPayload(createPayload({ imageUrls: [] }), {
@@ -10,11 +15,12 @@ describe("quality-check API", () => {
       requestId: () => "request-no-images",
       fetcher: async (input) => {
         calls.push(String(input));
+        if (String(input) === "https://api.openai.com/v1/responses") return mockOpenAIVerdictResponse();
         return new Response("{}");
       }
     });
 
-    expect(calls).toEqual([]);
+    expect(calls).toEqual(["https://api.openai.com/v1/responses"]);
     expect(result).toMatchObject({
       requestId: "request-no-images",
       source: "backend",
@@ -30,12 +36,22 @@ describe("quality-check API", () => {
     });
   });
 
+  it("errors instead of returning heuristic results when OpenAI is unavailable", async () => {
+    await expect(
+      handleQualityCheckPayload(createPayload({ imageUrls: [] }), {
+        env: testEnv({ OPENAI_API_KEY: "" }),
+        requestId: () => "missing-openai"
+      })
+    ).rejects.toThrow("OPENAI_API_KEY is not configured; Stage 6 core analysis is unavailable.");
+  });
+
   it("prevents image-only model claims about fabric quality, construction, authenticity, or durability", async () => {
     const result = await handleQualityCheckPayload(createPayload({ imageUrls: ["https://cdn.example.com/product.png"] }), {
       env: testEnv(),
       requestId: () => "request-forbidden-claims",
       fetcher: async (input) => {
         const url = String(input);
+        if (url === "https://api.openai.com/v1/responses") return mockOpenAIVerdictResponse();
         if (url.startsWith("https://generativelanguage.googleapis.com/")) {
           return Response.json({
             candidates: [
@@ -111,6 +127,7 @@ describe("quality-check API", () => {
       requestId: () => "request-shopper-inference",
       fetcher: async (input) => {
         const url = String(input);
+        if (url === "https://api.openai.com/v1/responses") return mockOpenAIVerdictResponse();
         if (url.startsWith("https://generativelanguage.googleapis.com/")) {
           return Response.json({
             candidates: [
@@ -196,6 +213,7 @@ describe("quality-check API", () => {
       requestId: () => "request-next-blazer",
       fetcher: async (input) => {
         const url = String(input);
+        if (url === "https://api.openai.com/v1/responses") return mockOpenAIVerdictResponse();
         if (url.startsWith("https://generativelanguage.googleapis.com/")) {
           return Response.json({
             candidates: [
@@ -311,6 +329,7 @@ describe("quality-check API", () => {
       requestId: () => "request-stable",
       fetcher: async (input) => {
         const url = String(input);
+        if (url === "https://api.openai.com/v1/responses") return mockOpenAIVerdictResponse();
         if (url.startsWith("https://generativelanguage.googleapis.com/")) {
           return Response.json({
             candidates: [
@@ -366,7 +385,7 @@ describe("quality-check API", () => {
 
     expect(result).toMatchObject({
       requestId: "request-stable",
-      summary: 'Stage 6 verdict completed for "Merino Jumper": buy (7.3/10).',
+      summary: 'Stage 6 verdict completed for "Merino Jumper": buy (7.1/10).',
       receivedUrl: "https://shop.example/products/merino-jumper",
       source: "backend",
       capturedTitle: "Merino Jumper",
@@ -418,24 +437,23 @@ describe("quality-check API", () => {
           warnings: expect.arrayContaining([
             "vision observations are enrichment only",
             "expert visual inferences must be caveated and low/medium confidence unless directly visible",
-            "do not assert fabric authenticity, exact construction method, or durability from images alone",
-            "OPENAI_API_KEY is not configured; Stage 6 core analysis is disabled."
+            "do not assert fabric authenticity, exact construction method, or durability from images alone"
           ])
         },
         verdict: {
-          overall_rating: 7.3,
+          overall_rating: 7.1,
           recommendation: "buy",
           scores: {
-            quality: 7.8,
-            value: 6.7,
+            quality: 7.4,
+            value: 6.8,
             durability: 6.5,
-            aesthetic: 7.6,
+            aesthetic: 7.1,
             confidence: 0.86
           },
           confidence_label: "high",
           matched_examples: expect.arrayContaining(["approved_merino_knit_mid_premium_001"]),
           model: "gpt-5.4-mini",
-          model_status: "heuristic_fallback"
+          model_status: "model_completed"
         },
         approved_examples: expect.arrayContaining([
           expect.objectContaining({
@@ -444,7 +462,7 @@ describe("quality-check API", () => {
           })
         ]),
         model_config: expect.objectContaining({
-          openai_configured: false
+          openai_configured: true
         })
       }
     });
@@ -463,10 +481,10 @@ describe("quality-check API", () => {
       results[0].analysis?.verdict.scores,
       results[0].analysis?.verdict.scores
     ]);
-    expect(results.map((result) => result.analysis?.verdict.overall_rating)).toEqual([7.2, 7.2, 7.2]);
+    expect(results.map((result) => result.analysis?.verdict.overall_rating)).toEqual([7.1, 7.1, 7.1]);
   });
 
-  it("generates shopper-friendly good signs and unverified notes without forcing watch-outs", async () => {
+  it("uses model shopper signals without adding fallback positives", async () => {
     const result = await handleQualityCheckPayload(createPayload({ imageUrls: [] }), {
       env: testEnv(),
       requestId: () => "shopper-signals"
@@ -494,29 +512,17 @@ describe("quality-check API", () => {
       expect.arrayContaining([
         expect.objectContaining({
           label: "Strong material choice",
-          detail: expect.stringContaining("temperature regulation"),
           category: "material",
           confidence: "high"
-        }),
-        expect.objectContaining({
-          label: "Fair value",
-          detail: expect.stringContaining("At £120")
         })
       ])
     );
+    expect(goodSigns).not.toEqual(expect.arrayContaining([expect.objectContaining({ label: "Fair value" })]));
     expect(unverified).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           label: "Construction unclear",
           category: "construction"
-        }),
-        expect.objectContaining({
-          label: "Care behaviour unclear",
-          category: "care"
-        }),
-        expect.objectContaining({
-          label: "Fit evidence limited",
-          category: "fit"
         })
       ])
     );
@@ -639,7 +645,34 @@ describe("quality-check API", () => {
 
     const result = await handleQualityCheckPayload(payload, {
       env: testEnv(),
-      requestId: () => "synthetic-watch-outs"
+      requestId: () => "synthetic-watch-outs",
+      fetcher: async (input) => {
+        expect(String(input)).toBe("https://api.openai.com/v1/responses");
+        return mockOpenAIVerdictResponse({
+          watch_outs: [
+            {
+              title: "Breathability limited",
+              description: "Synthetic-heavy fabrics can be easy-care, but they often feel less airy than cotton, linen, or wool in warmer weather.",
+              evidence_type: "material",
+              confidence: "medium"
+            },
+            {
+              title: "Price looks high",
+              description: "At £95, the price asks a lot for a synthetic shirt unless the cut, finish, or performance details are unusually strong.",
+              evidence_type: "price",
+              confidence: "medium"
+            }
+          ],
+          unverified: [
+            {
+              title: "Construction unclear",
+              description: "The listing does not show seam, placket, collar, or button attachment detail, so the build read stays cautious.",
+              evidence_type: "construction",
+              confidence: "medium"
+            }
+          ]
+        });
+      }
     });
 
     expect(result.analysis?.verdict.watch_outs).toEqual(
@@ -680,7 +713,22 @@ describe("quality-check API", () => {
 
     const result = await handleQualityCheckPayload(payload, {
       env: testEnv(),
-      requestId: () => "only-unverified-signals"
+      requestId: () => "only-unverified-signals",
+      fetcher: async (input) => {
+        expect(String(input)).toBe("https://api.openai.com/v1/responses");
+        return mockOpenAIVerdictResponse({
+          good_signs: [],
+          watch_outs: [],
+          unverified: [
+            {
+              title: "Fabric quality unclear",
+              description: "The listing does not give a reliable fibre composition, so fabric quality, handle, breathability, and likely wear are hard to judge.",
+              evidence_type: "material",
+              confidence: "high"
+            }
+          ]
+        });
+      }
     });
 
     expect(result.analysis?.verdict.good_signs).toEqual([]);
@@ -713,7 +761,36 @@ describe("quality-check API", () => {
 
     const result = await handleQualityCheckPayload(payload, {
       env: testEnv(),
-      requestId: () => "weak-source"
+      requestId: () => "weak-source",
+      fetcher: async (input) => {
+        expect(String(input)).toBe("https://api.openai.com/v1/responses");
+        return mockOpenAIVerdictResponse({
+          recommendation: "not_enough_info",
+          scores: {
+            quality: 3.8,
+            value: 3.8,
+            durability: 3.8,
+            aesthetic: 4.5,
+            confidence: 0.28
+          },
+          verdicts: {
+            quality: { verdict: "Material composition was not found, so quality cannot be judged strongly.", confidence: "low", evidence_type: "unknown" },
+            value: { verdict: "Price context is too thin for a useful value call.", confidence: "low", evidence_type: "unknown" },
+            durability: { verdict: "Durability is hard to judge without material, care, or construction evidence.", confidence: "low", evidence_type: "unknown" },
+            aesthetic: { verdict: "Aesthetic judgement is limited by sparse product evidence.", confidence: "low", evidence_type: "unknown" }
+          },
+          good_signs: [],
+          watch_outs: [],
+          unverified: [
+            {
+              title: "Fabric quality unclear",
+              description: "The listing does not give a reliable fibre composition, so fabric quality, handle, breathability, and likely wear are hard to judge.",
+              evidence_type: "material",
+              confidence: "high"
+            }
+          ]
+        });
+      }
     });
 
     expect(result.analysis?.verdict).toMatchObject({
@@ -754,6 +831,16 @@ describe("quality-check API", () => {
               confidence: 1
             },
             confidence_label: "high",
+            good_signs: [
+              {
+                title: "Strong material choice",
+                description: "Merino wool should feel soft, breathable, and warm while looking smarter than basic acrylic knitwear.",
+                evidence_type: "material",
+                confidence: "high"
+              }
+            ],
+            watch_outs: [],
+            unverified: [],
             verdicts: {
               quality: { verdict: "Strong stated material signal.", confidence: "high", evidence_type: "stated_on_page" },
               value: { verdict: "Consistent with approved examples.", confidence: "high", evidence_type: "similar_approved_example" },
@@ -822,7 +909,25 @@ describe("quality-check API", () => {
     const result = await handleQualityCheckPayload(payload, {
       env: testEnv({ OPENAI_API_KEY: "test-openai-key", QUALITY_CHECK_PUBLIC_EVIDENCE_SEARCH: "enabled" }),
       requestId: () => "kamakura-wqgs04",
-      fetcher: async (input) => {
+      fetcher: async (input, init) => {
+        if (isStage6Request(init)) return mockOpenAIVerdictResponse({
+          good_signs: [
+            {
+              title: "Strong owner feedback",
+              description: "External evidence says the cotton oxford fabric feels substantial, which supports the product's quality and value read.",
+              evidence_type: "reviews",
+              confidence: "high"
+            }
+          ],
+          unverified: [
+            {
+              title: "Care behaviour unclear",
+              description: "The captured product facts do not show enough care guidance, so wash behaviour and upkeep effort remain hard to judge.",
+              evidence_type: "durability",
+              confidence: "medium"
+            }
+          ]
+        });
         expect(String(input)).toBe("https://api.openai.com/v1/responses");
         return Response.json({
           output_text: JSON.stringify({
@@ -967,8 +1072,9 @@ describe("quality-check API", () => {
     const result = await handleQualityCheckPayload(payload, {
       env: testEnv({ OPENAI_API_KEY: "test-openai-key", QUALITY_CHECK_PUBLIC_EVIDENCE_SEARCH: "enabled" }),
       requestId: () => "uniqlo-oxford-external-none",
-      fetcher: async () =>
-        Response.json({
+      fetcher: async (_input, init) => {
+        if (isStage6Request(init)) return mockOpenAIVerdictResponse();
+        return Response.json({
           output_text: JSON.stringify({
             external_sources_found: true,
             useful_sources_count: 1,
@@ -999,7 +1105,8 @@ describe("quality-check API", () => {
               }
             ]
           })
-        })
+        });
+      }
     });
 
     expect(result.analysis?.page_evidence).toEqual(
@@ -1044,8 +1151,9 @@ describe("quality-check API", () => {
     const result = await handleQualityCheckPayload(payload, {
       env: testEnv({ OPENAI_API_KEY: "test-openai-key", QUALITY_CHECK_PUBLIC_EVIDENCE_SEARCH: "enabled" }),
       requestId: () => "uniqlo-oxford-ai-evidence-agent",
-      fetcher: async (input) => {
+      fetcher: async (input, init) => {
         fetchedUrls.push(String(input));
+        if (isStage6Request(init)) return mockOpenAIVerdictResponse();
         return Response.json({
           output_text: JSON.stringify({
             external_sources_found: true,
@@ -1149,8 +1257,18 @@ describe("quality-check API", () => {
     const result = await handleQualityCheckPayload(payload, {
       env: testEnv({ OPENAI_API_KEY: "test-openai-key", QUALITY_CHECK_PUBLIC_EVIDENCE_SEARCH: "enabled" }),
       requestId: () => "uniqlo-repeated-shopper-themes",
-      fetcher: async () =>
-        Response.json({
+      fetcher: async (_input, init) => {
+        if (isStage6Request(init)) return mockOpenAIVerdictResponse({
+          watch_outs: [
+            {
+              title: "May shrink after washing",
+              description: "Repeated external feedback is limited but points to fit tightening after washing, so sizing confidence should stay cautious.",
+              evidence_type: "reviews",
+              confidence: "medium"
+            }
+          ]
+        });
+        return Response.json({
           output_text: JSON.stringify({
             external_sources_found: true,
             useful_sources_count: 3,
@@ -1222,7 +1340,8 @@ describe("quality-check API", () => {
             cross_source_themes: [],
             rejected_sources: []
           })
-        })
+        });
+      }
     });
 
     expect(result.analysis?.external_evidence).toEqual(
@@ -1282,8 +1401,9 @@ describe("quality-check API", () => {
     const result = await handleQualityCheckPayload(payload, {
       env: testEnv({ OPENAI_API_KEY: "test-openai-key", QUALITY_CHECK_PUBLIC_EVIDENCE_SEARCH: "enabled" }),
       requestId: () => "uniqlo-ai-evidence-agent-validation",
-      fetcher: async (input) => {
+      fetcher: async (input, init) => {
         const url = String(input);
+        if (url === "https://api.openai.com/v1/responses" && isStage6Request(init)) return mockOpenAIVerdictResponse();
         if (url === "https://api.openai.com/v1/responses") {
           return Response.json({
             output_text: JSON.stringify({
@@ -1361,8 +1481,9 @@ describe("quality-check API", () => {
     const result = await handleQualityCheckPayload(payload, {
       env: testEnv({ OPENAI_API_KEY: "test-openai-key", QUALITY_CHECK_PUBLIC_EVIDENCE_SEARCH: "enabled" }),
       requestId: () => "uniqlo-openai-annotations",
-      fetcher: async (input) => {
+      fetcher: async (input, init) => {
         const url = String(input);
+        if (url === "https://api.openai.com/v1/responses" && isStage6Request(init)) return mockOpenAIVerdictResponse();
         if (url === "https://api.openai.com/v1/responses") {
           return Response.json({
             output_text: JSON.stringify({
@@ -1436,7 +1557,7 @@ describe("quality-check API", () => {
 function testEnv(overrides: Record<string, string> = {}) {
   return {
     GEMINI_API_KEY: "test-gemini-key",
-    OPENAI_API_KEY: "",
+    OPENAI_API_KEY: "test-openai-key",
     QUALITY_CHECK_VISION_MODEL: "gemini-3.0-flash",
     QUALITY_CHECK_CORE_MODEL: "gpt-5.4-mini",
     QUALITY_CHECK_PREMIUM_FALLBACK_MODEL: "gpt-5.4",
@@ -1444,6 +1565,68 @@ function testEnv(overrides: Record<string, string> = {}) {
     QUALITY_CHECK_PUBLIC_EVIDENCE_SEARCH: "disabled",
     ...overrides
   };
+}
+
+function defaultTestFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  if (String(input) === "https://api.openai.com/v1/responses" && isStage6Request(init)) return Promise.resolve(mockOpenAIVerdictResponse());
+  return Promise.resolve(new Response("Unhandled test fetch", { status: 500 }));
+}
+
+function mockOpenAIVerdictResponse(overrides: Record<string, unknown> = {}): Response {
+  return Response.json({
+    output_text: JSON.stringify({
+      overall_rating: 7.2,
+      recommendation: "buy",
+      recommendation_summary: "Strong fabric signal, with a few checks left.",
+      scores: {
+        quality: 7.4,
+        value: 6.8,
+        durability: 6.5,
+        aesthetic: 7.1,
+        confidence: 0.86
+      },
+      confidence_label: "high",
+      good_signs: [
+        {
+          title: "Strong material choice",
+          description: "Merino wool should feel soft, breathable, and warm while looking smarter than basic acrylic knitwear.",
+          evidence_type: "material",
+          confidence: "high"
+        }
+      ],
+      watch_outs: [],
+      unverified: [
+        {
+          title: "Construction unclear",
+          description: "The listing does not show seam linking, rib recovery, or knit density, so long-term shape retention is harder to judge.",
+          evidence_type: "construction",
+          confidence: "medium"
+        }
+      ],
+      verdicts: {
+        quality: { verdict: "Merino wool is a strong material signal.", confidence: "high", evidence_type: "stated_on_page" },
+        value: { verdict: "The price looks fair for the material and item type.", confidence: "medium", evidence_type: "similar_approved_example" },
+        durability: { verdict: "Care and construction evidence limit the durability read.", confidence: "medium", evidence_type: "general_material_knowledge" },
+        aesthetic: { verdict: "The styling is clean and versatile.", confidence: "medium", evidence_type: "inferred_from_image" }
+      },
+      reasoning_flags: [],
+      matched_examples: [],
+      evidence_score_effects: [],
+      summary: "Strong fabric signal, with a few checks left.",
+      ...overrides
+    })
+  });
+}
+
+function isStage6Request(init?: RequestInit): boolean {
+  const body = typeof init?.body === "string" ? init.body : "";
+  if (!body) return false;
+  try {
+    const parsed = JSON.parse(body) as { text?: { format?: { name?: string } } };
+    return parsed.text?.format?.name === "quality_check_stage_6_verdict";
+  } catch {
+    return false;
+  }
 }
 
 function createPayload({ imageUrls }: { imageUrls: string[] }): BackendPayload {
