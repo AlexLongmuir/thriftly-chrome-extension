@@ -63,6 +63,18 @@ Use concise, evidence-led product language. Do not overstate confidence when the
 
 Use git worktrees for parallel implementation work, but do not ask the user to load each worktree's `dist/` directory into Chrome.
 
+Before any non-read-only implementation, commit, PR, or merge task:
+
+1. Run `git status --short --branch` and `npm run chat:list`.
+2. If the current directory is `/Users/alex/Documents/thriftly-chrome-extension`, treat it as the primary control folder. Do not edit or commit there.
+3. Create a task worktree with `npm run chat:new -- <task-slug>`, then do all subsequent implementation, verification, commit, PR, and merge work from `/Users/alex/Documents/scouted-worktrees/<task-slug>`.
+4. If a matching clean worktree already exists for the task, use that existing worktree instead of creating another one.
+5. If the primary folder has dirty files, assume they belong to another task. Do not stage, commit, reset, restore, or overwrite them unless explicitly asked.
+
+For read-only investigation, planning, status checks, and answering questions, it is acceptable to stay in the primary folder.
+
+After a PR is merged, return to the primary folder, run `git pull --ff-only`, then run `npm run chat:done -- <task-slug>` or `npm run chat:cleanup -- --apply` to remove the clean merged worktree.
+
 Default Chrome testing workflow:
 
 - Treat `/Users/alex/Documents/scouted-extension-active` as the single Chrome-loaded unpacked extension directory.
