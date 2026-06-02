@@ -1123,29 +1123,6 @@ img {
   font-weight: 650;
 }
 
-.loading-title-row {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-}
-
-.loading-title-row h2 {
-  color: var(--foreground);
-  font-size: 15px;
-  font-weight: 800;
-  line-height: 1.2;
-}
-
-.small-spinner {
-  width: 14px;
-  height: 14px;
-  flex: 0 0 auto;
-  border: 2px solid rgb(47 111 159 / 0.25);
-  border-top-color: var(--neutral-score);
-  border-radius: 999px;
-  animation: spin 0.9s linear infinite;
-}
-
 .tracker-list {
   display: grid;
 }
@@ -2538,10 +2515,6 @@ pre {
   .loading-product-image {
     width: 56px;
     height: 64px;
-  }
-
-  .loading-title-row h2 {
-    font-size: 15px;
   }
 
   .tracker-step strong {
