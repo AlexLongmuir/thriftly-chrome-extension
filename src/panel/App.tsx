@@ -1,7 +1,6 @@
 import { useMemo, useState } from "react";
 import { submitQualityCheck } from "../api/client";
 import { classifyProductEvidence } from "../shared/classification";
-import sampleLinenShirtImage from "./assets/arket-white-linen-shirt.avif";
 import type {
   ActiveTabExtraction,
   BackendAnalysis,
@@ -26,9 +25,6 @@ const DEFAULT_MONTHLY_WEARS = 8;
 const LOADING_STEP_ACKNOWLEDGEMENT_MS = 650;
 const SHOW_DEBUG_EVIDENCE = import.meta.env.VITE_SCOUTED_DEBUG_EVIDENCE === "true";
 const SAMPLE_ANALYSIS = {
-  brand: "Arket",
-  title: "Relaxed Linen Shirt",
-  price: "£67",
   overall_rating: 7.4,
   recommendation: "consider" as Recommendation,
   verdict: "A real linen shirt at a fair price - you'll just be ironing it.",
@@ -116,9 +112,8 @@ export function App() {
       ) : status === "idle" ? (
         <>
           <div className="state-scroll">
-            <EmptyState onShowTechnicalDetails={() => setActivePage("how-it-works")} />
+            <EmptyState onRunCheck={handleRunCheck} onShowTechnicalDetails={() => setActivePage("how-it-works")} />
           </div>
-          <StateFooter buttonLabel="Analyse this item" onClick={handleRunCheck} disabled={false} />
         </>
       ) : isChecking ? (
         <>
@@ -328,12 +323,21 @@ function HowItWorksPage({ onBack }: { onBack: () => void }) {
   );
 }
 
-function EmptyState({ onShowTechnicalDetails }: { onShowTechnicalDetails: () => void }) {
+function EmptyState({
+  onRunCheck,
+  onShowTechnicalDetails
+}: {
+  onRunCheck: () => void;
+  onShowTechnicalDetails: () => void;
+}) {
   return (
     <section className="empty-preview-state">
       <div className="empty-hook">
         <h1>Is it actually<br />worth buying?</h1>
-        <p>Scouted reads the page and what reviewers really say, then gives a straight verdict.</p>
+        <p>Scouted reads the product page and real buyer feedback, then shows what's good, what's risky, and whether it's worth buying.</p>
+        <button className="primary-button primary-button--wide empty-hero-button" type="button" onClick={onRunCheck}>
+          Analyse this item
+        </button>
       </div>
       <SampleAnalysisCard />
       <HowScoutedWorks onShowTechnicalDetails={onShowTechnicalDetails} />
@@ -348,16 +352,6 @@ function SampleAnalysisCard() {
   return (
     <section className="sample-analysis" aria-label="Sample analysis">
       <div className="sample-tag"><span aria-hidden="true" />Sample analysis</div>
-      <div className="sample-product-row">
-        <div className="sample-product-image">
-          <img src={sampleLinenShirtImage} alt="" />
-        </div>
-        <div className="sample-product-copy">
-          <p>{SAMPLE_ANALYSIS.brand}</p>
-          <strong>{SAMPLE_ANALYSIS.title}</strong>
-          <span>{SAMPLE_ANALYSIS.price}</span>
-        </div>
-      </div>
       <div className="sample-score-row">
         <div className={`sample-grade grade-tile--${tone}`}>
           <strong>{gradeFor(SAMPLE_ANALYSIS.overall_rating)}</strong>
@@ -438,16 +432,6 @@ function HowScoutedWorks({ onShowTechnicalDetails }: { onShowTechnicalDetails: (
         Learn more about the technical implementation
       </button>
     </section>
-  );
-}
-
-function StateFooter({ buttonLabel, onClick, disabled }: { buttonLabel: string; onClick: () => void; disabled: boolean }) {
-  return (
-    <footer className="state-footer">
-      <button className="primary-button primary-button--wide" type="button" onClick={onClick} disabled={disabled}>
-        {buttonLabel}
-      </button>
-    </footer>
   );
 }
 
