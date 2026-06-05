@@ -128,6 +128,29 @@
   box-shadow: 0 6px 14px -6px rgb(46 110 147 / 0.7);
 }
 
+.rating-row .grade-tile--excellent_pick,
+.rating-row .grade-tile--worth_buying {
+  background: var(--success);
+  box-shadow: 0 6px 14px -6px rgb(45 106 79 / 0.7);
+}
+
+.rating-row .grade-tile--consider {
+  background: var(--neutral-score);
+  box-shadow: 0 6px 14px -6px rgb(46 110 147 / 0.7);
+}
+
+.rating-row .grade-tile--skip,
+.rating-row .grade-tile--poor_value {
+  background: var(--warning);
+  box-shadow: 0 6px 14px -6px rgb(146 64 14 / 0.65);
+}
+
+.rating-row .grade-tile--avoid,
+.rating-row .grade-tile--cant_assess {
+  background: var(--destructive);
+  box-shadow: 0 6px 14px -6px rgb(168 65 46 / 0.65);
+}
+
 .grade-score {
   color: #fff;
   font-size: 26px;
@@ -2676,6 +2699,29 @@ pre {
   background: var(--neutral-score);
   color: #fff;
   box-shadow: 0 6px 14px -6px rgb(46 110 147 / 0.7);
+}
+
+.rating-row .grade-tile--excellent_pick,
+.rating-row .grade-tile--worth_buying {
+  background: var(--success);
+  box-shadow: 0 6px 14px -6px rgb(45 106 79 / 0.7);
+}
+
+.rating-row .grade-tile--consider {
+  background: var(--neutral-score);
+  box-shadow: 0 6px 14px -6px rgb(46 110 147 / 0.7);
+}
+
+.rating-row .grade-tile--skip,
+.rating-row .grade-tile--poor_value {
+  background: var(--warning);
+  box-shadow: 0 6px 14px -6px rgb(146 64 14 / 0.65);
+}
+
+.rating-row .grade-tile--avoid,
+.rating-row .grade-tile--cant_assess {
+  background: var(--destructive);
+  box-shadow: 0 6px 14px -6px rgb(168 65 46 / 0.65);
 }
 
 .grade-score {

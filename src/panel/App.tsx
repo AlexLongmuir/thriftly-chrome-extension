@@ -577,7 +577,7 @@ function ProductHero({
       </div>
       <div className="result-divider" />
       <div className="rating-row">
-        <div className="grade-tile">
+        <div className={`grade-tile grade-tile--${verdict.recommendation}`}>
           <div className="grade-score">{score}<small>/100</small></div>
         </div>
         <div className="rating-right">
