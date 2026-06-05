@@ -82,6 +82,7 @@ export function App() {
   const showAnalysisAction = Boolean(analysis) && activePage === "summary";
 
   async function handleRunCheck() {
+    const forceRefresh = Boolean(verdict);
     setVerdict(null);
     setExtraction(null);
     setError(null);
@@ -93,7 +94,7 @@ export function App() {
       setExtraction(activeTabExtraction);
 
       setStatus("sending");
-      const response = await submitQualityCheck(createBackendPayload(activeTabExtraction.snapshot));
+      const response = await submitQualityCheck(createBackendPayload(activeTabExtraction.snapshot), { forceRefresh });
       setStatus("scoring");
       await waitForLoadingStepAcknowledgement();
       setVerdict(response);

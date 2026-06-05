@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { createHash } from "node:crypto";
 import type {
   BackendAnalysis,
   BackendPayload,
@@ -41,7 +42,8 @@ import type {
   VisualObservationEvidenceType,
   VisualQualityDimension,
   VisualScoreDimension,
-  VisualScoreEffect
+  VisualScoreEffect,
+  RecommendationCandidate
 } from "../src/shared/messages";
 
 const MAX_IMAGES = 4;
@@ -50,6 +52,8 @@ const REQUEST_BODY_LIMIT_BYTES = 1_000_000;
 const DEFAULT_VISION_MODEL = "gemini-3.0-flash";
 const DEFAULT_CORE_MODEL = "gpt-5.4-mini";
 const DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small";
+const DEFAULT_CACHE_TTL_DAYS = 7;
+const PROMPT_SCHEMA_VERSION = "stage_6_v1";
 const FORBIDDEN_STRONG_VISUAL_CLAIM_PATTERN =
   /\b(?:made from|made of|is genuine|are genuine|authentic|real leather|full[- ]grain|top[- ]grain|100%\s+|pure\s+(?:wool|cotton|linen|leather|silk)|will last|long[- ]term durable|welted construction|goodyear welted|fabric quality is|construction is (?:excellent|poor|high quality|low quality)|(?:is|are) (?:genuine|authentic|real|pure|durable|high quality|low quality|wool|cotton|linen|leather|silk))\b/i;
 const UNQUALIFIED_VISUAL_QUALITY_PATTERN =
@@ -70,6 +74,9 @@ type QualityCheckEnv = {
   coreModel: string;
   embeddingModel: string;
   publicEvidenceSearchEnabled: boolean;
+  supabaseUrl: string | null;
+  supabaseServiceRoleKey: string | null;
+  cacheTtlDays: number;
 };
 
 type DownloadedImage = {
@@ -84,6 +91,7 @@ type QualityCheckDependencies = {
   env?: Env;
   fetcher?: Fetcher;
   requestId?: () => string;
+  storage?: ProductIntelligenceRepository | null;
 };
 
 type GeminiGenerateContentResponse = {
@@ -104,6 +112,12 @@ type OpenAIResponsesResponse = {
       type?: string;
       text?: string;
     }>;
+  }>;
+};
+
+type OpenAIEmbeddingResponse = {
+  data?: Array<{
+    embedding?: number[];
   }>;
 };
 
@@ -150,6 +164,52 @@ type EvidencePack = {
   agentPack: ExternalEvidenceAgentPack;
   timings?: Partial<BackendAnalysis["timings_ms"]>;
 };
+
+type ProductIntelligenceRecord = {
+  id: string;
+  canonical_product_key: string;
+  product_url: string;
+  retailer_domain: string;
+  page_fingerprint: string;
+  raw_payload: BackendPayload;
+  normalised_product: ProductClassification;
+  analysis: BackendAnalysis;
+  public_evidence: PublicEvidenceItem[];
+  external_evidence_pack?: ExternalEvidenceAgentPack;
+  scores: VerdictScores;
+  verdict: Stage6Verdict;
+  image_urls: string[];
+  source_confidence_score: number;
+  source_confidence_label: VerdictConfidence | ProductClassification["source_confidence_label"];
+  model_config: BackendAnalysis["model_config"] & { prompt_schema_version?: string };
+  extension_version: string;
+  prompt_schema_version: string;
+  embedding_text: string;
+  embedding?: number[] | null;
+  matched_approved_example_ids: string[];
+  created_at: string;
+  updated_at: string;
+  last_analysed_at: string;
+  expires_at: string;
+};
+
+type ProductIntelligenceRepository = {
+  getByCanonicalKey(key: string): Promise<ProductIntelligenceRecord | null>;
+  upsert(record: ProductIntelligenceRecord): Promise<ProductIntelligenceRecord>;
+  findRecommendationCandidates(input: RecommendationQuery): Promise<RecommendationCandidate[]>;
+  findApprovedExamples?(classification: ProductClassification, embedding: number[] | null): Promise<MatchedApprovedExample[]>;
+  upsertApprovedExamples?(examples: MatchedApprovedExample[]): Promise<void>;
+};
+
+type RecommendationQuery = {
+  canonicalProductKey: string;
+  classification: ProductClassification;
+  analysis: BackendAnalysis;
+  embedding: number[] | null;
+  embeddingText: string;
+};
+
+const seededApprovedExampleStores = new WeakSet<ProductIntelligenceRepository>();
 
 const APPROVED_EXAMPLES: MatchedApprovedExample[] = [
   example("approved_merino_knit_mid_premium_001", "knitwear", "wool", "mid-premium", "£80-£150", [8.6, 8.8, 8.0, 8.4, 0.86], "worth_buying", "COS", "Pure Merino Jumper", "£135", "https://www.cos.com/"),
@@ -218,8 +278,45 @@ export async function handleQualityCheckPayload(
   const payload = validateStage5Payload(body);
   const env = readQualityCheckEnv(dependencies.env || process.env);
   const fetcher = dependencies.fetcher || fetch;
+  const storage = dependencies.storage === undefined ? createSupabaseRepository(env, fetcher) : dependencies.storage;
+  const canonicalProductKey = canonicalProductKeyForPayload(payload);
+  const pageFingerprint = buildPageFingerprint(payload);
+  const forcedRefresh = payload.refresh === "force";
+  let storageHadError = false;
+
+  if (storage && !forcedRefresh) {
+    try {
+      const cached = await storage.getByCanonicalKey(canonicalProductKey);
+      if (cached && cached.page_fingerprint === pageFingerprint && new Date(cached.expires_at).getTime() > Date.now()) {
+        const recommendations = await safeRecommendationCandidates(storage, {
+          canonicalProductKey,
+          classification: cached.normalised_product,
+          analysis: cached.analysis,
+          embedding: cached.embedding || null,
+          embeddingText: cached.embedding_text
+        });
+        return {
+          requestId: dependencies.requestId ? dependencies.requestId() : crypto.randomUUID(),
+          summary: buildSummary(cached.analysis),
+          receivedUrl: payload.page.url,
+          source: "backend",
+          capturedTitle: cached.analysis.product.title,
+          cache_status: "hit",
+          analysis_id: cached.id,
+          cached_at: cached.updated_at,
+          expires_at: cached.expires_at,
+          recommendations,
+          analysis: cached.analysis
+        };
+      }
+    } catch (error) {
+      storageHadError = true;
+      console.error("quality-check cache read failed", error);
+    }
+  }
+
   const title = String(payload.page.product.fields.title.value || payload.page.title || "Untitled page");
-  const matchedExamples = retrieveApprovedExamples(payload.classification);
+  const matchedExamples = await retrieveApprovedExamples(payload.classification, storage, null);
   const visualPromise = buildVisualEnrichmentResult(payload, env, fetcher);
   const evidencePromise = measureAsync(() => gatherEvidencePack(payload, env, fetcher), "external_evidence");
   const [visualBuild, evidenceBuild] = await Promise.all([visualPromise, evidencePromise]);
@@ -283,12 +380,39 @@ export async function handleQualityCheckPayload(
     }
   };
 
+  const embeddingText = buildStyleAwareEmbeddingText(payload, analysis);
+  const embedding = storage ? await safeCreateEmbedding(embeddingText, env, fetcher) : null;
+  const persisted = storage
+    ? await safePersistAnalysis(storage, payload, analysis, {
+        canonicalProductKey,
+        pageFingerprint,
+        embeddingText,
+        embedding,
+        ttlDays: env.cacheTtlDays
+      })
+    : null;
+  if (storage && !persisted) storageHadError = true;
+  const recommendations = storage
+    ? await safeRecommendationCandidates(storage, {
+        canonicalProductKey,
+        classification: payload.classification,
+        analysis,
+        embedding,
+        embeddingText
+      })
+    : [];
+
   return {
     requestId: dependencies.requestId ? dependencies.requestId() : crypto.randomUUID(),
     summary: buildSummary(analysis),
     receivedUrl: payload.page.url,
     source: "backend",
     capturedTitle: title,
+    cache_status: storage ? (storageHadError ? "error_fallback" : forcedRefresh ? "refresh" : "miss") : "disabled",
+    analysis_id: persisted?.id,
+    cached_at: persisted?.updated_at,
+    expires_at: persisted?.expires_at,
+    recommendations,
     analysis
   };
 }
@@ -1106,7 +1230,21 @@ function isRiskTheme(theme: EvidenceInsightTheme): boolean {
   return theme === "fit" || theme === "shrinkage" || theme === "construction" || theme === "fabric_weight";
 }
 
-function retrieveApprovedExamples(classification: ProductClassification): MatchedApprovedExample[] {
+async function retrieveApprovedExamples(
+  classification: ProductClassification,
+  storage: ProductIntelligenceRepository | null,
+  embedding: number[] | null
+): Promise<MatchedApprovedExample[]> {
+  if (storage?.findApprovedExamples) {
+    try {
+      await ensureApprovedExamplesSeeded(storage);
+      const stored = await storage.findApprovedExamples(classification, embedding);
+      if (stored.length > 0) return stored.slice(0, 5);
+    } catch (error) {
+      console.error("approved example retrieval failed", error);
+    }
+  }
+
   return APPROVED_EXAMPLES.map((item) => ({
     ...item,
     similarity: similarityScore(classification, item)
@@ -2557,6 +2695,524 @@ function isVerdictEvidenceType(value: unknown): value is VerdictEvidenceType {
   );
 }
 
+export function canonicalProductKeyForPayload(payload: BackendPayload): string {
+  const domain = retailerDomain(payload.page.url);
+  const urlKey = canonicalPathKey(payload.page.url);
+  if (urlKey) return `${domain}:${urlKey}`;
+
+  const brand = textValue(payload.page.product.fields.brand.value) || payload.classification.brand || "";
+  const title = textValue(payload.page.product.fields.title.value) || payload.page.title || "";
+  return `${domain}:${slugify(`${brand} ${title}`) || "unknown-product"}`;
+}
+
+export function buildPageFingerprint(payload: BackendPayload): string {
+  const product = payload.page.product;
+  const facts = {
+    url_key: canonicalPathKey(payload.page.url),
+    page_state: product.page_state,
+    title: normalisedFieldValue(product.fields.title.value),
+    brand: normalisedFieldValue(product.fields.brand.value),
+    price: normalisedFieldValue(product.fields.price.value),
+    currency: normalisedFieldValue(product.fields.currency.value),
+    colour: normalisedFieldValue(product.fields.colour.value),
+    description: normalisedFieldValue(product.fields.description.value),
+    materials: normalisedFieldValue(product.fields.materials.value),
+    care: normalisedFieldValue(product.fields.care.value),
+    construction: normalisedFieldValue(product.fields.construction.value),
+    origin: normalisedFieldValue(product.fields.origin.value),
+    sizing: normalisedFieldValue(product.fields.sizing.value),
+    on_site_rating: normalisedFieldValue(product.fields.onSiteRating.value),
+    on_site_review_count: normalisedFieldValue(product.fields.onSiteReviewCount.value),
+    review_claims: normalisedFieldValue(product.fields.reviewClaims.value),
+    category_breadcrumbs: normalisedFieldValue(product.fields.categoryBreadcrumbs.value),
+    image_urls: uniqueStrings(normaliseImageUrls(payload).map((url) => url.trim())).sort()
+  };
+  return sha256(stableStringify(facts));
+}
+
+export function buildStyleAwareEmbeddingText(payload: BackendPayload, analysis: BackendAnalysis): string {
+  const product = payload.page.product;
+  const classification = analysis.classification;
+  const verdict = analysis.verdict;
+  const visualCues = analysis.visual_enrichment.visual_cues.map((item) => item.cue);
+  const visualInferences = analysis.visual_enrichment.expert_inferences.map((item) => item.inference);
+  const aestheticDescriptors = styleDescriptors(payload, analysis);
+  const avoid = negativeStyleConstraints(classification, aestheticDescriptors);
+
+  return [
+    "FACTS",
+    line("Category", classification.category),
+    line("Product type", productTypeForClassification(classification)),
+    line("Brand", classification.brand),
+    line("Retailer domain", retailerDomain(payload.page.url)),
+    line("Title", textValue(product.fields.title.value) || analysis.product.title),
+    line("Colour", classification.primary_colour || textValue(product.fields.colour.value)),
+    line("Material family", classification.material_family),
+    line("Material details", textValue(product.fields.materials.value) || classification.material_description),
+    line("Construction details", textValue(product.fields.construction.value) || classification.construction_description),
+    line("Care", textValue(product.fields.care.value)),
+    line("Price", classification.price),
+    line("Price band", priceBandForClassification(classification)),
+    line("Description", textValue(product.fields.description.value)),
+    line("Category breadcrumbs", textValue(product.fields.categoryBreadcrumbs.value)),
+    "",
+    "INFERRED STYLE",
+    line("Aesthetic descriptors", aestheticDescriptors.join(", ")),
+    line("Style tags", classification.style_tags.join(", ")),
+    line("Use case", classification.use_case),
+    line("Silhouette", silhouetteDescription(payload, analysis)),
+    line("Branding intensity", brandingIntensity(payload, analysis)),
+    line("Avoid matching with", avoid.join(", ")),
+    "",
+    "VISUAL CUES",
+    line("Observed cues", visualCues.join(" | ")),
+    line("Caveated inferences", visualInferences.join(" | ")),
+    line("Missing views", analysis.visual_enrichment.missing_views.join(", ")),
+    "",
+    "ANALYSIS",
+    line("Recommendation", verdict.recommendation),
+    line("Verdict summary", verdict.recommendation_summary || verdict.summary),
+    line("Scores", `quality ${verdict.scores.quality}, value ${verdict.scores.value}, durability ${verdict.scores.durability}, aesthetic ${verdict.scores.aesthetic}, confidence ${verdict.scores.confidence}`),
+    line("Good signs", verdict.good_signs.map((item) => item.label).join(", ")),
+    line("Watch-outs", verdict.watch_outs.map((item) => item.label).join(", "))
+  ]
+    .filter((item) => item !== null)
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+async function safeCreateEmbedding(text: string, env: QualityCheckEnv, fetcher: Fetcher): Promise<number[] | null> {
+  if (!env.openaiApiKey) return null;
+  try {
+    const response = await fetcher("https://api.openai.com/v1/embeddings", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${env.openaiApiKey}`
+      },
+      body: JSON.stringify({
+        model: env.embeddingModel,
+        input: text
+      })
+    });
+    if (!response.ok) return null;
+    const data = (await response.json()) as OpenAIEmbeddingResponse;
+    const embedding = data.data?.[0]?.embedding;
+    return Array.isArray(embedding) && embedding.length > 0 ? embedding : null;
+  } catch (error) {
+    console.error("quality-check embedding failed", error);
+    return null;
+  }
+}
+
+async function safePersistAnalysis(
+  storage: ProductIntelligenceRepository,
+  payload: BackendPayload,
+  analysis: BackendAnalysis,
+  options: {
+    canonicalProductKey: string;
+    pageFingerprint: string;
+    embeddingText: string;
+    embedding: number[] | null;
+    ttlDays: number;
+  }
+): Promise<ProductIntelligenceRecord | null> {
+  try {
+    const now = new Date();
+    const expires = new Date(now.getTime() + options.ttlDays * 24 * 60 * 60 * 1000);
+    return await storage.upsert({
+      id: crypto.randomUUID(),
+      canonical_product_key: options.canonicalProductKey,
+      product_url: payload.page.url,
+      retailer_domain: retailerDomain(payload.page.url),
+      page_fingerprint: options.pageFingerprint,
+      raw_payload: payload,
+      normalised_product: analysis.classification,
+      analysis,
+      public_evidence: analysis.public_evidence,
+      external_evidence_pack: analysis.external_evidence_pack,
+      scores: analysis.verdict.scores,
+      verdict: analysis.verdict,
+      image_urls: normaliseImageUrls(payload),
+      source_confidence_score: analysis.product.source_confidence_score,
+      source_confidence_label: analysis.product.source_confidence_label,
+      model_config: {
+        ...analysis.model_config,
+        prompt_schema_version: PROMPT_SCHEMA_VERSION
+      },
+      extension_version: payload.extension.version,
+      prompt_schema_version: PROMPT_SCHEMA_VERSION,
+      embedding_text: options.embeddingText,
+      embedding: options.embedding,
+      matched_approved_example_ids: analysis.verdict.matched_examples,
+      created_at: now.toISOString(),
+      updated_at: now.toISOString(),
+      last_analysed_at: now.toISOString(),
+      expires_at: expires.toISOString()
+    });
+  } catch (error) {
+    console.error("quality-check cache write failed", error);
+    return null;
+  }
+}
+
+async function safeRecommendationCandidates(
+  storage: ProductIntelligenceRepository,
+  query: RecommendationQuery
+): Promise<RecommendationCandidate[]> {
+  try {
+    const candidates = await storage.findRecommendationCandidates(query);
+    return rankRecommendationCandidates(candidates, query).slice(0, 3);
+  } catch (error) {
+    console.error("quality-check recommendation retrieval failed", error);
+    return [];
+  }
+}
+
+function rankRecommendationCandidates(candidates: RecommendationCandidate[], query: RecommendationQuery): RecommendationCandidate[] {
+  const currentScores = query.analysis.verdict.scores;
+  return candidates
+    .filter((item) => item.id !== query.canonicalProductKey)
+    .filter((item) => item.scores.confidence >= 0.45)
+    .filter((item) => item.scores.quality > currentScores.quality || item.scores.value > currentScores.value)
+    .map((item) => ({
+      item,
+      rank:
+        item.similarity +
+        Math.max(0, item.scores.quality - currentScores.quality) * 0.08 +
+        Math.max(0, item.scores.value - currentScores.value) * 0.1 +
+        styleReasonScore(item.match_reason, query.embeddingText) * 0.12
+    }))
+    .filter(({ rank }) => rank >= 0.55)
+    .sort((left, right) => right.rank - left.rank)
+    .map(({ item }) => item);
+}
+
+function createSupabaseRepository(env: QualityCheckEnv, fetcher: Fetcher): ProductIntelligenceRepository | null {
+  if (!env.supabaseUrl || !env.supabaseServiceRoleKey) return null;
+  const baseUrl = env.supabaseUrl.replace(/\/+$/, "");
+  const headers = {
+    apikey: env.supabaseServiceRoleKey,
+    Authorization: `Bearer ${env.supabaseServiceRoleKey}`,
+    "Content-Type": "application/json"
+  };
+
+  async function request(path: string, init: RequestInit = {}): Promise<Response> {
+    return fetcher(`${baseUrl}${path}`, {
+      ...init,
+      headers: {
+        ...headers,
+        ...(init.headers || {})
+      }
+    });
+  }
+
+  return {
+    async getByCanonicalKey(key) {
+      const response = await request(
+        `/rest/v1/product_intelligence_records?canonical_product_key=eq.${encodeURIComponent(key)}&select=*&limit=1`
+      );
+      if (!response.ok) throw new Error(`Supabase cache read failed with HTTP ${response.status}`);
+      const rows = (await response.json()) as ProductIntelligenceRecord[];
+      return rows[0] || null;
+    },
+    async upsert(record) {
+      const response = await request("/rest/v1/product_intelligence_records?on_conflict=canonical_product_key", {
+        method: "POST",
+        headers: { Prefer: "resolution=merge-duplicates,return=representation" },
+        body: JSON.stringify([record])
+      });
+      if (!response.ok) throw new Error(`Supabase cache upsert failed with HTTP ${response.status}`);
+      const rows = (await response.json()) as ProductIntelligenceRecord[];
+      return rows[0] || record;
+    },
+    async findRecommendationCandidates(query) {
+      const response = await request("/rest/v1/rpc/scouted_match_recommendation_candidates", {
+        method: "POST",
+        body: JSON.stringify({
+          query_embedding: query.embedding,
+          query_category: query.classification.category,
+          query_product_type: productTypeForClassification(query.classification),
+          query_material_family: query.classification.material_family,
+          query_price: parsePrice(query.classification.price),
+          query_canonical_product_key: query.canonicalProductKey,
+          match_count: 12
+        })
+      });
+      if (!response.ok) throw new Error(`Supabase recommendations failed with HTTP ${response.status}`);
+      return ((await response.json()) as RecommendationCandidate[]).filter(Boolean);
+    },
+    async findApprovedExamples(classification) {
+      const response = await request(
+        `/rest/v1/approved_product_examples?category=eq.${encodeURIComponent(classification.category)}&select=*&limit=20`
+      );
+      if (!response.ok) throw new Error(`Supabase approved examples failed with HTTP ${response.status}`);
+      const rows = (await response.json()) as Array<Record<string, unknown>>;
+      return rows
+        .map(rowToApprovedExample)
+        .filter((item): item is MatchedApprovedExample => Boolean(item))
+        .map((item) => ({ ...item, similarity: similarityScore(classification, item) }))
+        .sort((left, right) => right.similarity - left.similarity)
+        .slice(0, 5);
+    },
+    async upsertApprovedExamples(examples) {
+      const response = await request("/rest/v1/approved_product_examples?on_conflict=id", {
+        method: "POST",
+        headers: { Prefer: "resolution=merge-duplicates" },
+        body: JSON.stringify(examples.map(approvedExampleSeedRow))
+      });
+      if (!response.ok) throw new Error(`Supabase approved example seed failed with HTTP ${response.status}`);
+    }
+  };
+}
+
+async function ensureApprovedExamplesSeeded(storage: ProductIntelligenceRepository): Promise<void> {
+  if (!storage.upsertApprovedExamples || seededApprovedExampleStores.has(storage)) return;
+  await storage.upsertApprovedExamples(APPROVED_EXAMPLES);
+  seededApprovedExampleStores.add(storage);
+}
+
+function approvedExampleSeedRow(exampleItem: MatchedApprovedExample) {
+  return {
+    id: exampleItem.id,
+    category: exampleItem.category,
+    material_family: exampleItem.material_family,
+    brand_tier: exampleItem.brand_tier,
+    price_band: exampleItem.price_band,
+    brand: exampleItem.brand,
+    title: exampleItem.title,
+    url: exampleItem.url,
+    price_display: exampleItem.price_display,
+    image_url: exampleItem.image_url || null,
+    expected_scores: exampleItem.expected_scores,
+    recommendation: exampleItem.recommendation,
+    reasoning: `${exampleItem.recommendation} anchor for ${exampleItem.category} / ${exampleItem.material_family} / ${exampleItem.brand_tier}`,
+    style_tags: [],
+    confidence: exampleItem.expected_scores.confidence,
+    embedding_text: [
+      "APPROVED EXAMPLE",
+      line("Category", exampleItem.category),
+      line("Material family", exampleItem.material_family),
+      line("Brand tier", exampleItem.brand_tier),
+      line("Price band", exampleItem.price_band),
+      line("Brand", exampleItem.brand),
+      line("Title", exampleItem.title),
+      line("Recommendation", exampleItem.recommendation),
+      line("Scores", `quality ${exampleItem.expected_scores.quality}, value ${exampleItem.expected_scores.value}, durability ${exampleItem.expected_scores.durability}, aesthetic ${exampleItem.expected_scores.aesthetic}, confidence ${exampleItem.expected_scores.confidence}`)
+    ]
+      .filter((item) => item !== null)
+      .join("\n")
+  };
+}
+
+function rowToApprovedExample(row: Record<string, unknown>): MatchedApprovedExample | null {
+  const scores = row.expected_scores as Partial<VerdictScores> | undefined;
+  if (!scores || !isRecommendation(row.recommendation)) return null;
+  return {
+    id: String(row.id || ""),
+    category: isProductCategory(row.category) ? row.category : "other",
+    material_family: isMaterialFamily(row.material_family) ? row.material_family : "unknown",
+    brand_tier: isBrandTier(row.brand_tier) ? row.brand_tier : "unknown",
+    price_band: String(row.price_band || "unknown"),
+    brand: String(row.brand || ""),
+    title: String(row.title || ""),
+    url: String(row.url || ""),
+    price_display: String(row.price_display || ""),
+    image_url: typeof row.image_url === "string" ? row.image_url : null,
+    expected_scores: {
+      quality: numberOr(scores.quality, 0),
+      value: numberOr(scores.value, 0),
+      durability: numberOr(scores.durability, 0),
+      aesthetic: numberOr(scores.aesthetic, 0),
+      confidence: numberOr(scores.confidence, 0)
+    },
+    recommendation: row.recommendation,
+    similarity: 0
+  };
+}
+
+function retailerDomain(value: string): string {
+  try {
+    return new URL(value).hostname.replace(/^www\./i, "").toLowerCase();
+  } catch {
+    return "unknown-retailer";
+  }
+}
+
+function canonicalPathKey(value: string): string | null {
+  try {
+    const url = new URL(value);
+    const path = url.pathname.replace(/\/+$/, "").toLowerCase();
+    if (!path || path === "/") return null;
+    return slugify(path.split("/").filter(Boolean).slice(-3).join("-"));
+  } catch {
+    return null;
+  }
+}
+
+function normalisedFieldValue(value: string | string[] | null): string | string[] | null {
+  if (Array.isArray(value)) return uniqueStrings(value.map((item) => item.toLowerCase())).sort();
+  if (typeof value === "string") return value.trim().replace(/\s+/g, " ").toLowerCase() || null;
+  return null;
+}
+
+function textValue(value: string | string[] | null): string | null {
+  if (Array.isArray(value)) return uniqueStrings(value).join("; ") || null;
+  if (typeof value === "string") return value.trim().replace(/\s+/g, " ") || null;
+  return null;
+}
+
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+  if (!value || typeof value !== "object") return JSON.stringify(value);
+  return `{${Object.entries(value as Record<string, unknown>)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, item]) => `${JSON.stringify(key)}:${stableStringify(item)}`)
+    .join(",")}}`;
+}
+
+function sha256(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function slugify(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 180);
+}
+
+function line(label: string, value: string | number | null | undefined): string | null {
+  if (value === null || value === undefined || value === "") return null;
+  return `${label}: ${value}`;
+}
+
+function productTypeForClassification(classification: ProductClassification): string {
+  if (classification.category === "footwear") return "trainers";
+  if (classification.category === "t-shirt") return "t-shirt";
+  return classification.category;
+}
+
+function priceBandForClassification(classification: ProductClassification): string {
+  const price = parsePrice(classification.price);
+  if (price === null) return classification.brand_tier;
+  if (price < 30) return "budget";
+  if (price < 80) return "high-street";
+  if (price < 180) return "mid-premium";
+  if (price < 500) return "premium";
+  return "luxury";
+}
+
+function styleDescriptors(payload: BackendPayload, analysis: BackendAnalysis): string[] {
+  const text = [
+    textValue(payload.page.product.fields.title.value),
+    textValue(payload.page.product.fields.description.value),
+    textValue(payload.page.product.fields.construction.value),
+    analysis.classification.style_tags.join(" "),
+    analysis.classification.use_case,
+    ...analysis.visual_enrichment.visual_cues.map((item) => item.cue),
+    ...analysis.visual_enrichment.expert_inferences.map((item) => item.inference)
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  const descriptors = new Set<string>(analysis.classification.style_tags);
+
+  if (/\b(minimal|minimalist|plain|clean|understated|simple|low branding|no logo|unbranded)\b/.test(text)) descriptors.add("minimalist");
+  if (/\b(chunky|bulky|oversized|platform)\b/.test(text)) descriptors.add("chunky");
+  if (/\b(sport|running|technical|performance|athletic)\b/.test(text)) descriptors.add("sporty");
+  if (/\b(retro|vintage|heritage)\b/.test(text)) descriptors.add("retro");
+  if (/\b(smart|office|tailored|formal)\b/.test(text)) descriptors.add("smart");
+  if (/\b(casual|everyday)\b/.test(text)) descriptors.add("casual");
+  if (/\b(low[- ]profile|court|slim)\b/.test(text)) descriptors.add("low-profile");
+  if (/\b(logo|branded|monogram)\b/.test(text)) descriptors.add("branded");
+
+  return [...descriptors].slice(0, 10);
+}
+
+function silhouetteDescription(payload: BackendPayload, analysis: BackendAnalysis): string {
+  const text = `${textValue(payload.page.product.fields.title.value) || ""} ${textValue(payload.page.product.fields.description.value) || ""} ${analysis.visual_enrichment.visual_cues.map((item) => item.cue).join(" ")}`.toLowerCase();
+  if (/\b(low[- ]profile|court|slim)\b/.test(text)) return "low-profile court-style silhouette";
+  if (/\b(chunky|platform|bulky)\b/.test(text)) return "chunky or high-volume silhouette";
+  if (/\b(running|technical|performance)\b/.test(text)) return "sporty technical silhouette";
+  if (analysis.classification.category === "footwear") return "general footwear silhouette";
+  return `${analysis.classification.category} silhouette`;
+}
+
+function brandingIntensity(payload: BackendPayload, analysis: BackendAnalysis): string {
+  const text = `${textValue(payload.page.product.fields.description.value) || ""} ${analysis.visual_enrichment.visual_cues.map((item) => item.cue).join(" ")}`.toLowerCase();
+  if (/\b(no logo|unbranded|low branding|minimal logo|subtle logo)\b/.test(text)) return "low";
+  if (/\b(monogram|large logo|logo detail|branded)\b/.test(text)) return "high";
+  return "unknown";
+}
+
+function negativeStyleConstraints(classification: ProductClassification, descriptors: string[]): string[] {
+  const constraints = new Set<string>();
+  if (classification.category === "footwear" && descriptors.includes("minimalist")) {
+    constraints.add("chunky");
+    constraints.add("technical");
+    constraints.add("sporty");
+    constraints.add("high-contrast");
+    constraints.add("heavily branded");
+  }
+  if (descriptors.includes("smart")) constraints.add("very casual");
+  if (descriptors.includes("low-profile")) constraints.add("bulky");
+  return [...constraints];
+}
+
+function styleReasonScore(reason: string, embeddingText: string): number {
+  const reasonWords = new Set(reason.toLowerCase().match(/[a-z][a-z-]{2,}/g) || []);
+  const textWords = new Set(embeddingText.toLowerCase().match(/[a-z][a-z-]{2,}/g) || []);
+  let overlap = 0;
+  for (const word of reasonWords) {
+    if (textWords.has(word)) overlap += 1;
+  }
+  return Math.min(1, overlap / 8);
+}
+
+function isProductCategory(value: unknown): value is ProductCategory {
+  return (
+    value === "knitwear" ||
+    value === "shirt" ||
+    value === "t-shirt" ||
+    value === "trousers" ||
+    value === "denim" ||
+    value === "outerwear" ||
+    value === "footwear" ||
+    value === "bag" ||
+    value === "accessory" ||
+    value === "dress" ||
+    value === "skirt" ||
+    value === "activewear" ||
+    value === "other"
+  );
+}
+
+function isMaterialFamily(value: unknown): value is MaterialFamily {
+  return (
+    value === "wool" ||
+    value === "cotton" ||
+    value === "linen" ||
+    value === "leather" ||
+    value === "silk" ||
+    value === "synthetic" ||
+    value === "viscose" ||
+    value === "blend" ||
+    value === "unknown"
+  );
+}
+
+function isBrandTier(value: unknown): value is BrandTier {
+  return value === "budget" || value === "high-street" || value === "mid-premium" || value === "premium" || value === "luxury" || value === "unknown";
+}
+
+function positiveInteger(value: string | undefined, fallback: number): number {
+  const parsed = value ? Number.parseInt(value, 10) : NaN;
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 function readQualityCheckEnv(env: Env): QualityCheckEnv {
   return {
     geminiApiKey: env.GEMINI_API_KEY || null,
@@ -2564,7 +3220,10 @@ function readQualityCheckEnv(env: Env): QualityCheckEnv {
     visionModel: env.QUALITY_CHECK_VISION_MODEL || DEFAULT_VISION_MODEL,
     coreModel: env.QUALITY_CHECK_CORE_MODEL || DEFAULT_CORE_MODEL,
     embeddingModel: env.QUALITY_CHECK_EMBEDDING_MODEL || DEFAULT_EMBEDDING_MODEL,
-    publicEvidenceSearchEnabled: env.QUALITY_CHECK_PUBLIC_EVIDENCE_SEARCH !== "disabled"
+    publicEvidenceSearchEnabled: env.QUALITY_CHECK_PUBLIC_EVIDENCE_SEARCH !== "disabled",
+    supabaseUrl: env.SUPABASE_URL || null,
+    supabaseServiceRoleKey: env.SUPABASE_SERVICE_ROLE_KEY || null,
+    cacheTtlDays: positiveInteger(env.QUALITY_CHECK_CACHE_TTL_DAYS, DEFAULT_CACHE_TTL_DAYS)
   };
 }
 
