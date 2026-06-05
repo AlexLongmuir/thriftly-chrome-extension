@@ -79,6 +79,9 @@ QUALITY_CHECK_VISION_MODEL=gemini-3.0-flash
 QUALITY_CHECK_CORE_MODEL=gpt-5.4-mini
 QUALITY_CHECK_PREMIUM_FALLBACK_MODEL=gpt-5.4
 QUALITY_CHECK_EMBEDDING_MODEL=text-embedding-3-small
+QUALITY_CHECK_CACHE_TTL_DAYS=7
+SUPABASE_URL=...
+SUPABASE_SERVICE_ROLE_KEY=...
 ```
 
 Do not add model keys to `VITE_*` variables or Chrome extension files. `VITE_QUALITY_CHECK_API_URL` is safe because it is only the backend URL compiled into the extension.
@@ -136,6 +139,9 @@ QUALITY_CHECK_VISION_MODEL=gemini-3.0-flash
 QUALITY_CHECK_CORE_MODEL=gpt-5.4-mini
 QUALITY_CHECK_PREMIUM_FALLBACK_MODEL=gpt-5.4
 QUALITY_CHECK_EMBEDDING_MODEL=text-embedding-3-small
+QUALITY_CHECK_CACHE_TTL_DAYS=7
+SUPABASE_URL=...
+SUPABASE_SERVICE_ROLE_KEY=...
 ```
 
 ## Vercel deployment
@@ -156,6 +162,9 @@ npx vercel env add QUALITY_CHECK_VISION_MODEL production
 npx vercel env add QUALITY_CHECK_CORE_MODEL production
 npx vercel env add QUALITY_CHECK_PREMIUM_FALLBACK_MODEL production
 npx vercel env add QUALITY_CHECK_EMBEDDING_MODEL production
+npx vercel env add QUALITY_CHECK_CACHE_TTL_DAYS production
+npx vercel env add SUPABASE_URL production
+npx vercel env add SUPABASE_SERVICE_ROLE_KEY production
 ```
 
 Use these values for the model variables:
@@ -165,6 +174,7 @@ QUALITY_CHECK_VISION_MODEL=gemini-3.0-flash
 QUALITY_CHECK_CORE_MODEL=gpt-5.4-mini
 QUALITY_CHECK_PREMIUM_FALLBACK_MODEL=gpt-5.4
 QUALITY_CHECK_EMBEDDING_MODEL=text-embedding-3-small
+QUALITY_CHECK_CACHE_TTL_DAYS=7
 ```
 
 Deploy:
