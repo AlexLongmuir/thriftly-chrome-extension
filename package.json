@@ -22,7 +22,9 @@
     "hooks:install": "node scripts/worktree.mjs install-hooks",
     "audit:url-set": "vite-node scripts/audit-url-set.ts",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "preview:shots": "node scripts/preview-shots.mjs",
+    "preview:motion": "node scripts/motion-audit.mjs"
   },
   "dependencies": {
     "@fontsource-variable/fraunces": "^5.2.9",

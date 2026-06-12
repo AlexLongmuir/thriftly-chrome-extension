@@ -399,6 +399,19 @@ button {
   gap: 26px;
 }
 
+.empty-preview-state > * {
+  animation: riseIn 560ms var(--ease-out) both;
+}
+
+.empty-preview-state > :nth-child(1) { animation-delay: 20ms; }
+.empty-preview-state > :nth-child(2) { animation-delay: 90ms; }
+.empty-preview-state > :nth-child(3) { animation-delay: 170ms; }
+.empty-preview-state > :nth-child(4) { animation-delay: 250ms; }
+
+.empty-cta .primary-button {
+  animation: riseIn 520ms var(--ease-out) 240ms both;
+}
+
 .empty-masthead {
   display: flex;
   justify-content: center;
@@ -561,12 +574,18 @@ button {
   gap: 22px;
 }
 
+.loading-state > * {
+  animation: riseIn 520ms var(--ease-out) both;
+}
+
+.loading-state > :nth-child(2) { animation-delay: 80ms; }
+.loading-state > :nth-child(3) { animation-delay: 160ms; }
+
 .loading-product {
   display: grid;
   grid-template-columns: 58px minmax(0, 1fr);
   align-items: center;
   gap: 13px;
-  animation: riseIn 480ms var(--ease-out) both;
 }
 
 .loading-product-image {
@@ -670,7 +689,7 @@ button {
 .check-icon-path {
   stroke-dasharray: 16;
   stroke-dashoffset: 16;
-  animation: drawCheck 360ms var(--ease-out) 120ms forwards;
+  animation: drawCheck 320ms var(--ease-out) 40ms forwards;
 }
 
 .tracker-step--active .tracker-marker {
@@ -817,7 +836,7 @@ button {
   height: 100%;
   border-radius: inherit;
   background: var(--neutral-score);
-  animation: progressSweep 1.5s var(--ease-soft-spring) infinite;
+  animation: progressSweep 2.2s ease-in-out infinite;
 }
 
 /* 6. Loaded result ------------------------------------------------------------ */
@@ -1747,17 +1766,17 @@ button {
 
 .shirt-placeholder path:nth-of-type(-n + 3) {
   fill: var(--surface-muted);
-  stroke: var(--accent);
+  stroke: color-mix(in srgb, var(--accent) 60%, var(--muted-foreground));
   stroke-width: 1.5;
 }
 
 .shirt-placeholder path:nth-of-type(n + 4),
 .shirt-placeholder circle {
-  fill: var(--accent);
+  fill: color-mix(in srgb, var(--accent) 60%, var(--muted-foreground));
 }
 
 .shirt-placeholder line {
-  stroke: var(--accent);
+  stroke: color-mix(in srgb, var(--accent) 60%, var(--muted-foreground));
   stroke-width: 1.4;
 }
 
@@ -2154,12 +2173,13 @@ input[type="range"] {
 }
 
 @keyframes progressSweep {
-  0% {
-    transform: translateX(-110%);
+  0%,
+  100% {
+    transform: translateX(0);
   }
 
-  100% {
-    transform: translateX(443%);
+  50% {
+    transform: translateX(233%);
   }
 }
 

@@ -171,7 +171,7 @@ export function App() {
                   />
                   <SignsSection title="In its favour" tone="positive" items={analysis.verdict.good_signs} />
                   <SignsSection title="Worth watching" tone="negative" items={analysis.verdict.watch_outs} />
-                  <SignsSection title="Couldn't verify" tone="neutral" items={analysis.verdict.unverified} />
+                  <SignsSection title="Couldn’t verify" tone="neutral" items={analysis.verdict.unverified} />
                   <AlternativesSection approvedExamples={analysis.approved_examples} onViewAll={() => setActivePage("alternatives")} />
                   <HowScoresSection verdict={analysis.verdict} />
                 </div>
@@ -464,7 +464,7 @@ function LoadingFooter() {
   return (
     <footer className="loading-footer">
       <div className="loading-progress" aria-hidden="true"><span /></div>
-      <p>Usually takes 5-10 seconds</p>
+      <p>Usually takes 5–10 seconds</p>
     </footer>
   );
 }
