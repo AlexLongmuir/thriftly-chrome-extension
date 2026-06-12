@@ -1,5 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { flushSync } from "react-dom";
 import { submitQualityCheck } from "../api/client";
+import { ProductStageView } from "./stage/ProductStage";
+import sampleShirtImage from "./assets/arket-white-linen-shirt.avif";
 import { classifyProductEvidence } from "../shared/classification";
 import type {
   ActiveTabExtraction,
@@ -78,16 +81,17 @@ export function App() {
   const loadingImage = extraction ? productImage : null;
   const lifespan = analysis ? estimateLifespan(analysis.verdict.scores.durability, monthlyWears, analysis.verdict.confidence_label) : null;
   const isChecking = status === "extracting" || status === "sending" || status === "scoring";
-  const isStateView = activePage === "summary" && (status === "idle" || isChecking);
-  const showAnalysisAction = Boolean(analysis) && activePage === "summary";
+  const isStateView = activePage === "summary" && status !== "error";
 
   async function handleRunCheck() {
     const forceRefresh = Boolean(verdict);
-    setVerdict(null);
-    setExtraction(null);
-    setError(null);
-    setActivePage("summary");
-    setStatus("extracting");
+    withViewTransition(() => {
+      setVerdict(null);
+      setExtraction(null);
+      setError(null);
+      setActivePage("summary");
+      setStatus("extracting");
+    });
 
     try {
       const activeTabExtraction = await requestActiveTabExtraction();
@@ -97,12 +101,16 @@ export function App() {
       const response = await submitQualityCheck(createBackendPayload(activeTabExtraction.snapshot), { forceRefresh });
       setStatus("scoring");
       await waitForLoadingStepAcknowledgement();
-      setVerdict(response);
-      setStatus("complete");
+      withViewTransition(() => {
+        setVerdict(response);
+        setStatus("complete");
+      });
     } catch (caughtError) {
       const message = caughtError instanceof Error ? caughtError.message : "Unexpected extension error.";
-      setError(message);
-      setStatus("error");
+      withViewTransition(() => {
+        setError(message);
+        setStatus("error");
+      });
     }
   }
 
@@ -122,19 +130,26 @@ export function App() {
             </button>
           </footer>
         </>
-      ) : isChecking ? (
+      ) : activePage === "alternatives" && analysis ? (
+        <AlternativesPage approvedExamples={analysis.approved_examples} onBack={() => setActivePage("summary")} />
+      ) : isChecking || analysis ? (
         <>
-          <div className="state-scroll">
-            <LoadingState
+          <div className="state-scroll state-scroll--analysis">
+            <AnalysisView
+              checking={isChecking}
               status={status}
-              title={loadingTitle}
-              brand={loadingBrand}
-              price={loadingPrice}
-              imageUrl={loadingImage}
+              title={isChecking ? loadingTitle : productTitle}
+              brand={isChecking ? loadingBrand : productBrand}
+              price={isChecking ? loadingPrice : productPrice}
+              imageUrl={isChecking ? loadingImage : productImage}
               classification={classification}
+              analysis={analysis}
+              resultKey={verdict?.requestId ?? "result"}
+              onRefresh={handleRunCheck}
+              onViewAllAlternatives={() => setActivePage("alternatives")}
             />
           </div>
-          <LoadingFooter />
+          {isChecking ? <LoadingFooter /> : null}
         </>
       ) : (
         <>
@@ -153,30 +168,6 @@ export function App() {
                 Try again
               </button>
             </section>
-          ) : null}
-
-          {analysis ? (
-            activePage === "alternatives" ? (
-              <AlternativesPage approvedExamples={analysis.approved_examples} onBack={() => setActivePage("summary")} />
-            ) : (
-              <>
-                {showAnalysisAction ? <AnalysisActionBar onRefresh={handleRunCheck} disabled={isChecking} /> : null}
-                <div className="result-flow" key={verdict?.requestId ?? "result"}>
-                  <ProductHero
-                    title={productTitle}
-                    brand={productBrand}
-                    price={productPrice}
-                    imageUrl={productImage}
-                    verdict={analysis.verdict}
-                  />
-                  <SignsSection title="In its favour" tone="positive" items={analysis.verdict.good_signs} />
-                  <SignsSection title="Worth watching" tone="negative" items={analysis.verdict.watch_outs} />
-                  <SignsSection title="Couldn’t verify" tone="neutral" items={analysis.verdict.unverified} />
-                  <AlternativesSection approvedExamples={analysis.approved_examples} onViewAll={() => setActivePage("alternatives")} />
-                  <HowScoresSection verdict={analysis.verdict} />
-                </div>
-              </>
-            )
           ) : extraction && classification ? (
             <>
               <ProductSummary title={productTitle} brand={productBrand} price={productPrice} imageUrl={productImage} classification={classification} />
@@ -217,21 +208,96 @@ export function App() {
   );
 }
 
-function AnalysisActionBar({
+/** Wraps a state swap in the View Transitions API when available (the side
+    panel is Chrome-only) so old and new layouts morph instead of jump-cutting. */
+function withViewTransition(mutate: () => void) {
+  const start = (document as Document & { startViewTransition?: (cb: () => void) => void }).startViewTransition;
+  if (typeof start === "function" && !prefersReducedMotion()) {
+    start.call(document, () => flushSync(mutate));
+  } else {
+    mutate();
+  }
+}
+
+const RIM_BY_TONE: Record<ReturnType<typeof recommendationTone>, string> = {
+  positive: "#8fc1a5",
+  neutral: "#8fb3cd",
+  warning: "#d9a972",
+  destructive: "#d99884"
+};
+const SCAN_RIM = "#aebfce";
+
+/** One persistent view for checking + loaded so the 3D stage carries straight
+    through: the scan finishes and the same object lifts into rotation. */
+function AnalysisView({
+  checking,
+  status,
+  title,
+  brand,
+  price,
+  imageUrl,
+  classification,
+  analysis,
+  resultKey,
   onRefresh,
-  disabled
+  onViewAllAlternatives
 }: {
+  checking: boolean;
+  status: Status;
+  title: string;
+  brand: string;
+  price: string | null;
+  imageUrl: string | null;
+  classification: ProductClassification | null;
+  analysis: BackendAnalysis | null;
+  resultKey: string;
   onRefresh: () => void;
-  disabled: boolean;
+  onViewAllAlternatives: () => void;
 }) {
+  const tone = analysis ? recommendationTone(analysis.verdict.recommendation) : null;
+
   return (
-    <header className="panel-header">
-      <Wordmark />
-      <button className="pill-button" type="button" onClick={onRefresh} disabled={disabled}>
-        <ScanIcon />
-        <span>Check again</span>
-      </button>
-    </header>
+    <div className="analysis-view">
+      <header className="panel-header analysis-header">
+        <Wordmark />
+        {analysis && !checking ? (
+          <button className="pill-button" type="button" onClick={onRefresh}>
+            <ScanIcon />
+            <span>Check again</span>
+          </button>
+        ) : (
+          <span className="analysis-header-note">{checking ? "Analysing…" : ""}</span>
+        )}
+      </header>
+
+      <div className="analysis-stage">
+        <ProductStageView
+          imageUrl={imageUrl}
+          mode={checking ? "scan" : "orbit"}
+          rimColor={tone ? RIM_BY_TONE[tone] : SCAN_RIM}
+          placeholder={<ShirtPlaceholder />}
+        />
+      </div>
+
+      <div className="stage-copy">
+        <p>{toTitleCase(brand)}</p>
+        <h2>{title}</h2>
+        {price ? <span>{price}</span> : null}
+      </div>
+
+      {checking ? (
+        <AnalysisTracker status={status} price={price} imageUrl={imageUrl} classification={classification} />
+      ) : analysis ? (
+        <div className="result-flow" key={resultKey}>
+          <VerdictBlock verdict={analysis.verdict} />
+          <SignsSection title="In its favour" tone="positive" items={analysis.verdict.good_signs} />
+          <SignsSection title="Worth watching" tone="negative" items={analysis.verdict.watch_outs} />
+          <SignsSection title="Couldn’t verify" tone="neutral" items={analysis.verdict.unverified} />
+          <AlternativesSection approvedExamples={analysis.approved_examples} onViewAll={onViewAllAlternatives} />
+          <HowScoresSection verdict={analysis.verdict} />
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -375,6 +441,10 @@ function SampleAnalysisCard() {
   return (
     <section className="sample-analysis" aria-label="Sample analysis">
       <div className="sample-tag">Sample analysis</div>
+      <div className="sample-stage">
+        <ProductStageView imageUrl={sampleShirtImage} mode="orbit" rimColor="#8fb3cd" placeholder={<ShirtPlaceholder />} />
+        <p className="sample-stage-caption">Arket · Relaxed Linen Shirt · £87</p>
+      </div>
       <div className="sample-score-row">
         <div className={`grade-tile grade-tile--${tone}`}>
           <div className="grade-score">
@@ -469,17 +539,13 @@ function LoadingFooter() {
   );
 }
 
-function LoadingState({
+function AnalysisTracker({
   status,
-  title,
-  brand,
   price,
   imageUrl,
   classification
 }: {
   status: Status;
-  title: string;
-  brand: string;
   price: string | null;
   imageUrl: string | null;
   classification: ProductClassification | null;
@@ -517,23 +583,12 @@ function LoadingState({
   ] satisfies Array<{ state: "done" | "active" | "pending"; title: string; body: string }>;
 
   return (
-    <section className="loading-state">
-      <div className="loading-product">
-        <div className="loading-product-image">
-          {imageUrl ? <img src={imageUrl} alt="" /> : <ShirtPlaceholder />}
-        </div>
-        <div>
-          <p>{toTitleCase(brand)}</p>
-          <h2>{title}</h2>
-          {price ? <span>{price}</span> : null}
-        </div>
-      </div>
+    <section className="loading-state" aria-label="Analysis in progress">
       <div className="tracker-list">
         {steps.map((step, index) => (
           <TrackerStep key={step.title} state={step.state} number={index + 1} title={step.title} body={step.body} />
         ))}
       </div>
-      <LoadingSkeleton />
     </section>
   );
 }
@@ -560,41 +615,7 @@ function CheckIcon() {
   );
 }
 
-function LoadingSkeleton() {
-  return (
-    <section className="loading-skeleton" aria-label="Analysis preview loading">
-      <div className="skeleton-hero">
-        <div className="skeleton-block skeleton-image" />
-        <div className="skeleton-stack">
-          <div className="skeleton-line skeleton-line--wide" />
-          <div className="skeleton-line skeleton-line--medium" />
-        </div>
-      </div>
-      <div className="skeleton-verdict">
-        <div className="skeleton-line skeleton-line--full" />
-        <div className="skeleton-line skeleton-line--long" />
-      </div>
-      <div className="skeleton-tile-row">
-        <div className="skeleton-row" />
-        <div className="skeleton-row" />
-      </div>
-    </section>
-  );
-}
-
-function ProductHero({
-  title,
-  brand,
-  price,
-  imageUrl,
-  verdict
-}: {
-  title: string;
-  brand: string;
-  price: string | null;
-  imageUrl: string | null;
-  verdict: Stage6Verdict;
-}) {
+function VerdictBlock({ verdict }: { verdict: Stage6Verdict }) {
   const score = scoreOutOf100(verdict.overall_rating);
   const displayScore = useCountUp(score);
   const tone = recommendationTone(verdict.recommendation);
@@ -602,14 +623,6 @@ function ProductHero({
 
   return (
     <section className="scouted-hero">
-      <div className="scouted-product-row">
-        <TiltImage imageUrl={imageUrl} />
-        <div className="scouted-product-copy">
-          <p>{toTitleCase(brand)}</p>
-          <h2>{title}</h2>
-          {price ? <span>{price}</span> : null}
-        </div>
-      </div>
       <div className="result-divider" />
       <div className="rating-row">
         <div className={`grade-tile grade-tile--${tone}`}>
@@ -617,6 +630,7 @@ function ProductHero({
             {displayScore}
             <small>/100</small>
           </div>
+          <span className="grade-sheen" aria-hidden="true" />
         </div>
         <div className="rating-right">
           <div className="rating-tags">
@@ -627,46 +641,6 @@ function ProductHero({
         </div>
       </div>
     </section>
-  );
-}
-
-function TiltImage({ imageUrl }: { imageUrl: string | null }) {
-  const ref = useRef<HTMLDivElement>(null);
-
-  function handleMove(event: React.PointerEvent<HTMLDivElement>) {
-    const node = ref.current;
-    if (!node || prefersReducedMotion()) return;
-    const rect = node.getBoundingClientRect();
-    const offsetX = (event.clientX - rect.left) / rect.width - 0.5;
-    const offsetY = (event.clientY - rect.top) / rect.height - 0.5;
-    node.style.setProperty("--tilt-x", `${(-offsetY * 9).toFixed(2)}deg`);
-    node.style.setProperty("--tilt-y", `${(offsetX * 11).toFixed(2)}deg`);
-    node.style.setProperty("--glare-x", `${(offsetX * 100 + 50).toFixed(1)}%`);
-    node.style.setProperty("--glare-y", `${(offsetY * 100 + 50).toFixed(1)}%`);
-    node.style.setProperty("--glare-opacity", "1");
-  }
-
-  function handleLeave() {
-    const node = ref.current;
-    if (!node) return;
-    node.style.setProperty("--tilt-x", "0deg");
-    node.style.setProperty("--tilt-y", "0deg");
-    node.style.setProperty("--glare-opacity", "0");
-  }
-
-  return (
-    <div
-      className="scouted-product-image"
-      ref={ref}
-      onPointerMove={handleMove}
-      onPointerLeave={handleLeave}
-      aria-label={imageUrl ? "Product image" : "Product image unavailable"}
-    >
-      <div className="tilt-inner">
-        {imageUrl ? <img src={imageUrl} alt="" /> : <ShirtPlaceholder />}
-        <span className="tilt-glare" aria-hidden="true" />
-      </div>
-    </div>
   );
 }
 

@@ -107,8 +107,9 @@ for (const scenario of SCENARIOS) {
     const page = await browser.newPage();
     await page.setViewport({ width, height: HEIGHT, deviceScaleFactor: 2 });
     try {
-      await page.goto(`${BASE}/preview.html?view=${scenario.view}`, { waitUntil: "networkidle0", timeout: 15000 });
-      await sleep(300);
+      await page.goto(`${BASE}/preview.html?view=${scenario.view}`, { waitUntil: "domcontentloaded", timeout: 15000 });
+      await page.waitForSelector(".panel-shell", { timeout: 8000 });
+      await sleep(600);
       if (scenario.drive) await scenario.drive(page);
       await page.screenshot({ path: `shots/${scenario.name}-${width}.png` });
       console.log(`ok ${scenario.name}-${width}`);
