@@ -76,6 +76,7 @@ uniform float uScanActive;
 uniform float uScanY;
 uniform float uIntro;
 uniform float uRimBoost;
+uniform float uOpacity;
 uniform vec3 uRimColor;
 uniform vec3 uCameraPos;
 uniform float uDebugAlpha;
@@ -152,7 +153,7 @@ void main() {
   color += scanGlow * uScanActive;
 
   color *= mix(0.97, 1.0, uIntro);
-  outColor = vec4(color * alpha, alpha * uIntro);
+  outColor = vec4(color * alpha, alpha * uIntro) * uOpacity;
 }`;
 
 /* The contact shadow is a camera-facing soft ellipse: a true ground-plane quad
@@ -184,6 +185,26 @@ void main() {
   outColor = vec4(vec3(0.11, 0.12, 0.13) * a * 0.6, a * 0.6);
 }`;
 
+type WorldBox = { cx: number; cy: number; hw: number; hh: number };
+
+/** GPU data for one turntable view (0° = the original photo; the rest are
+    Gemini-generated turnaround frames added as they arrive). */
+type ViewData = {
+  angleDeg: number;
+  colorTexture: WebGLTexture;
+  depthTexture: WebGLTexture;
+  halfExtent: { x: number; y: number };
+  /** Mask bounding box in world units: centre + half extents. */
+  box: WorldBox;
+  texel: { x: number; y: number };
+};
+
+/** Below this many views the stage spins the single-photo relief instead of
+    blending turnaround frames (large angular gaps look worse than the relief). */
+const MIN_TURNAROUND_VIEWS = 4;
+/** Half-width of the crossfade window at the boundary between two views, deg. */
+const BLEND_HALF_WINDOW_DEG = 9;
+
 export class ProductStage {
   private gl: WebGL2RenderingContext;
   private canvas: HTMLCanvasElement;
@@ -192,13 +213,10 @@ export class ProductStage {
   private meshVao: WebGLVertexArrayObject;
   private shadowVao: WebGLVertexArrayObject;
   private meshIndexCount: number;
-  private colorTexture: WebGLTexture;
-  private depthTexture: WebGLTexture;
-  private halfExtent: { x: number; y: number };
-  /** Mask bounding box in world units: centre + half extents. */
-  private box: { cx: number; cy: number; hw: number; hh: number };
+  private views = new Map<number, ViewData>();
+  /** Front view's bounding box: the camera and shadow frame against this. */
+  private baseBox: WorldBox;
   private thickness: number;
-  private texel: { x: number; y: number };
 
   private mode: StageMode = "scan";
   private reducedMotion: boolean;
@@ -239,16 +257,6 @@ export class ProductStage {
     this.shadowProgram = createProgram(gl, SHADOW_VERTEX, SHADOW_FRAGMENT);
 
     const aspect = map.color.width / map.color.height;
-    this.halfExtent = aspect >= 1 ? { x: 0.5, y: 0.5 / aspect } : { x: 0.5 * aspect, y: 0.5 };
-    this.box = {
-      cx: (map.bounds.cx - 0.5) * 2 * this.halfExtent.x,
-      cy: (0.5 - map.bounds.cy) * 2 * this.halfExtent.y,
-      hw: map.bounds.hw * 2 * this.halfExtent.x,
-      hh: map.bounds.hh * 2 * this.halfExtent.y
-    };
-    this.thickness = Math.min(this.box.hw, this.box.hh) * 0.22;
-    this.texel = { x: 1 / map.depthWidth, y: 1 / map.depthHeight };
-
     const segX = 110;
     const segY = Math.max(48, Math.min(150, Math.round(segX / aspect)));
     const mesh = buildGrid(gl, segX, segY);
@@ -256,12 +264,43 @@ export class ProductStage {
     this.meshIndexCount = mesh.indexCount;
     this.shadowVao = buildGrid(gl, 1, 1).vao;
 
-    this.colorTexture = createTexture(gl);
+    const front = this.createView(0, map);
+    this.views.set(0, front);
+    this.baseBox = front.box;
+    this.thickness = Math.min(front.box.hw, front.box.hh) * 0.22;
+
+    this.lastTime = performance.now();
+    this.start();
+  }
+
+  /** Adds a generated turnaround frame. Views arrive progressively; once at
+      least MIN_TURNAROUND_VIEWS exist, rotation blends real imagery instead
+      of spinning the single-photo relief. */
+  addView(angleDeg: number, map: DepthMap) {
+    if (this.disposed) return;
+    const normalized = ((Math.round(angleDeg) % 360) + 360) % 360;
+    if (this.views.has(normalized)) return;
+    this.views.set(normalized, this.createView(normalized, map));
+    this.requestStaticFrame();
+  }
+
+  private createView(angleDeg: number, map: DepthMap): ViewData {
+    const gl = this.gl;
+    const aspect = map.color.width / map.color.height;
+    const halfExtent = aspect >= 1 ? { x: 0.5, y: 0.5 / aspect } : { x: 0.5 * aspect, y: 0.5 };
+    const box: WorldBox = {
+      cx: (map.bounds.cx - 0.5) * 2 * halfExtent.x,
+      cy: (0.5 - map.bounds.cy) * 2 * halfExtent.y,
+      hw: map.bounds.hw * 2 * halfExtent.x,
+      hh: map.bounds.hh * 2 * halfExtent.y
+    };
+
+    const colorTexture = createTexture(gl);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, map.color);
     gl.generateMipmap(gl.TEXTURE_2D);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
 
-    this.depthTexture = createTexture(gl);
+    const depthTexture = createTexture(gl);
     const depthBytes = new Uint8Array(map.depth.length);
     for (let i = 0; i < map.depth.length; i++) depthBytes[i] = Math.round(map.depth[i] * 255);
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
@@ -270,8 +309,14 @@ export class ProductStage {
       gl.RED, gl.UNSIGNED_BYTE, depthBytes
     );
 
-    this.lastTime = performance.now();
-    this.start();
+    return {
+      angleDeg,
+      colorTexture,
+      depthTexture,
+      halfExtent,
+      box,
+      texel: { x: 1 / map.depthWidth, y: 1 / map.depthHeight }
+    };
   }
 
   setMode(mode: StageMode) {
@@ -337,8 +382,11 @@ export class ProductStage {
     const gl = this.gl;
     gl.deleteProgram(this.meshProgram);
     gl.deleteProgram(this.shadowProgram);
-    gl.deleteTexture(this.colorTexture);
-    gl.deleteTexture(this.depthTexture);
+    for (const view of this.views.values()) {
+      gl.deleteTexture(view.colorTexture);
+      gl.deleteTexture(view.depthTexture);
+    }
+    this.views.clear();
   }
 
   private start() {
@@ -411,7 +459,7 @@ export class ProductStage {
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
     const canvasAspect = width / height;
-    const { hw: bhw, hh: bhh } = this.box;
+    const { hw: bhw, hh: bhh } = this.baseBox;
 
     // Fit the garment (not the whole texture) with margin, leaving room for
     // the contact shadow below.
@@ -429,8 +477,7 @@ export class ProductStage {
     if (this.debugAlpha) this.angle = 0;
     const bob = this.reducedMotion ? 0 : Math.sin(this.bobClock * 1.05) * 0.012 * this.orbitMix;
     const lift = (this.orbitMix * 0.018 + bob) * bhh;
-    const model = modelMatrix(this.angle, lift + bhh * 0.06, this.box.cx, this.box.cy);
-    const normalMatrix = rotationYMat3(this.angle);
+    const liftY = lift + bhh * 0.06;
 
     // Contact shadow first (blended), then the solid shells.
     gl.useProgram(this.shadowProgram);
@@ -449,24 +496,12 @@ export class ProductStage {
 
     gl.useProgram(this.meshProgram);
     gl.bindVertexArray(this.meshVao);
-    gl.disable(gl.BLEND);
     gl.enable(gl.DEPTH_TEST);
-    gl.enable(gl.SAMPLE_ALPHA_TO_COVERAGE);
-
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, this.colorTexture);
-    gl.activeTexture(gl.TEXTURE1);
-    gl.bindTexture(gl.TEXTURE_2D, this.depthTexture);
     setInt(gl, this.meshProgram, "uColor", 0);
     setInt(gl, this.meshProgram, "uDepth", 1);
 
     setMat4(gl, this.meshProgram, "uProjection", projection);
     setMat4(gl, this.meshProgram, "uView", view);
-    setMat4(gl, this.meshProgram, "uModel", model);
-    setMat3(gl, this.meshProgram, "uNormalMatrix", normalMatrix);
-    setVec2(gl, this.meshProgram, "uHalfExtent", [this.halfExtent.x, this.halfExtent.y]);
-    setVec2(gl, this.meshProgram, "uTexelSize", [this.texel.x, this.texel.y]);
-    setFloat(gl, this.meshProgram, "uThickness", this.thickness);
     setFloat(gl, this.meshProgram, "uOrbitMix", this.orbitMix);
     setFloat(gl, this.meshProgram, "uIntro", easeOutCubic(this.intro));
     setVec3(gl, this.meshProgram, "uRimColor", this.rimColor);
@@ -479,13 +514,99 @@ export class ProductStage {
     setFloat(gl, this.meshProgram, "uDebugAlpha", this.debugAlpha ? 1 : 0);
     setFloat(gl, this.meshProgram, "uFlatten", /stageFlat=1/.test(window.location.search) ? 1 : 0);
 
+    for (const item of this.buildDrawPlan()) {
+      this.drawViewPass(item, liftY);
+    }
+
+    gl.disable(gl.SAMPLE_ALPHA_TO_COVERAGE);
+    gl.disable(gl.BLEND);
+    gl.bindVertexArray(null);
+  }
+
+  /** Chooses which view(s) to draw at the current angle. With enough
+      generated views, rotation shows the nearest turnaround frame whose
+      relief is rotated by the small residual angle; a short crossfade hands
+      over at the boundary between neighbouring views. */
+  private buildDrawPlan(): Array<{ view: ViewData; residual: number; opacity: number; blend: boolean }> {
+    const front = this.views.get(0)!;
+    const turnaround = this.views.size >= MIN_TURNAROUND_VIEWS && this.mode === "orbit" && !this.debugAlpha;
+    if (!turnaround) {
+      return [{ view: front, residual: this.angle, opacity: 1, blend: false }];
+    }
+
+    const deg = ((((this.angle * 180) / Math.PI) % 360) + 360) % 360;
+    const sorted = [...this.views.keys()].sort((a, b) => a - b);
+    let lo = sorted[sorted.length - 1] - 360;
+    let hi = sorted[0];
+    for (let i = 0; i < sorted.length; i++) {
+      const start = sorted[i];
+      const end = i + 1 < sorted.length ? sorted[i + 1] : sorted[0] + 360;
+      if (deg >= start && deg < end) {
+        lo = start;
+        hi = end;
+        break;
+      }
+    }
+
+    const viewLo = this.views.get(((lo % 360) + 360) % 360)!;
+    const viewHi = this.views.get(((hi % 360) + 360) % 360)!;
+    const residualLo = ((deg - lo) * Math.PI) / 180;
+    const residualHi = ((deg - hi) * Math.PI) / 180;
+    const mid = (lo + hi) / 2;
+
+    if (deg <= mid - BLEND_HALF_WINDOW_DEG) {
+      return [{ view: viewLo, residual: residualLo, opacity: 1, blend: false }];
+    }
+    if (deg >= mid + BLEND_HALF_WINDOW_DEG) {
+      return [{ view: viewHi, residual: residualHi, opacity: 1, blend: false }];
+    }
+    const t = (deg - (mid - BLEND_HALF_WINDOW_DEG)) / (BLEND_HALF_WINDOW_DEG * 2);
+    const eased = t * t * (3 - 2 * t);
+    return [
+      { view: viewLo, residual: residualLo, opacity: 1, blend: false },
+      { view: viewHi, residual: residualHi, opacity: eased, blend: true }
+    ];
+  }
+
+  private drawViewPass(
+    item: { view: ViewData; residual: number; opacity: number; blend: boolean },
+    liftY: number
+  ) {
+    const gl = this.gl;
+    const { view, residual, opacity, blend } = item;
+
+    // Generated frames can render the garment at a slightly different scale;
+    // normalise so its bounding box height matches the front view's.
+    const scale = Math.min(2, Math.max(0.5, this.baseBox.hh / Math.max(view.box.hh, 1e-4)));
+
+    if (blend) {
+      // The fading-in view is its own solid object: give it a fresh depth
+      // range and composite it over the current frame.
+      gl.clear(gl.DEPTH_BUFFER_BIT);
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+      gl.disable(gl.SAMPLE_ALPHA_TO_COVERAGE);
+    } else {
+      gl.disable(gl.BLEND);
+      gl.enable(gl.SAMPLE_ALPHA_TO_COVERAGE);
+    }
+
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, view.colorTexture);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, view.depthTexture);
+
+    setMat4(gl, this.meshProgram, "uModel", modelMatrix(residual, liftY, view.box.cx, view.box.cy, scale));
+    setMat3(gl, this.meshProgram, "uNormalMatrix", rotationYMat3(residual));
+    setVec2(gl, this.meshProgram, "uHalfExtent", [view.halfExtent.x, view.halfExtent.y]);
+    setVec2(gl, this.meshProgram, "uTexelSize", [view.texel.x, view.texel.y]);
+    setFloat(gl, this.meshProgram, "uThickness", this.thickness / scale);
+    setFloat(gl, this.meshProgram, "uOpacity", opacity);
+
     for (const side of [-1, 1]) {
       setFloat(gl, this.meshProgram, "uSide", side);
       gl.drawElements(gl.TRIANGLES, this.meshIndexCount, gl.UNSIGNED_INT, 0);
     }
-
-    gl.disable(gl.SAMPLE_ALPHA_TO_COVERAGE);
-    gl.bindVertexArray(null);
   }
 }
 
@@ -589,20 +710,21 @@ function lookAtOrigin(cameraY: number, cameraZ: number, tilt: number): Float32Ar
   return out;
 }
 
-/** T(0, lift, 0) · RotY(angle) · T(-centerX, -centerY, 0): the garment spins
-    about its own bounding-box centre, then floats by `lift`. */
-function modelMatrix(angleY: number, lift: number, centerX: number, centerY: number): Float32Array {
+/** T(0, lift, 0) · RotY(angle) · S(scale) · T(-centerX, -centerY, 0): the
+    garment spins about its own bounding-box centre at a normalised size,
+    then floats by `lift`. */
+function modelMatrix(angleY: number, lift: number, centerX: number, centerY: number, scale = 1): Float32Array {
   const c = Math.cos(angleY);
   const s = Math.sin(angleY);
   const out = new Float32Array(16);
-  out[0] = c;
-  out[2] = -s;
-  out[5] = 1;
-  out[8] = s;
-  out[10] = c;
-  out[12] = -c * centerX;
-  out[13] = lift - centerY;
-  out[14] = s * centerX;
+  out[0] = c * scale;
+  out[2] = -s * scale;
+  out[5] = scale;
+  out[8] = s * scale;
+  out[10] = c * scale;
+  out[12] = -c * scale * centerX;
+  out[13] = lift - scale * centerY;
+  out[14] = s * scale * centerX;
   out[15] = 1;
   return out;
 }

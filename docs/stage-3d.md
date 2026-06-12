@@ -62,6 +62,24 @@ timing, transition continuity frame to frame.
 - `prefers-reduced-motion`: stage renders one static lit frame, no loop;
   view transitions are skipped entirely.
 
+## Gemini turnaround views
+
+- `api/product-views.ts` generates one turnaround frame per request
+  (angles 60/120/180/240/300; 0° is the original photo) via Gemini image
+  output, cached in Supabase `product_view_cache` keyed by
+  sha256(image_url + angle + model + prompt version).
+- `src/api/views.ts` fetches all angles in parallel as soon as the stage's
+  front view is live (during the scan); `ProductStage.addView` uploads each
+  frame's colour + depth textures progressively.
+- Rendering switches from single-photo relief spin to turnaround once ≥4
+  views exist: the nearest view's relief is rotated by the small residual
+  angle (≤ ±30°), with a 18°-wide crossfade at view boundaries
+  (fresh depth range + premultiplied blend for the incoming view).
+- Generated frames are size-normalised against the front view's mask bbox so
+  the garment doesn't jump between views.
+- The preview harness mocks `product-views` with mirrored/dimmed fixture
+  variants, so the whole path is auditable without an API key.
+
 ## Debug tooling
 
 - `node scripts/depth-lab.mjs [imageUrl]` — dumps the cutout composite and

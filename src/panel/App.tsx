@@ -276,6 +276,7 @@ function AnalysisView({
           mode={checking ? "scan" : "orbit"}
           rimColor={tone ? RIM_BY_TONE[tone] : SCAN_RIM}
           placeholder={<ShirtPlaceholder />}
+          turnaround={{ title: title || null }}
         />
       </div>
 

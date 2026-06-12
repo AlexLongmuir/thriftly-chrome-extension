@@ -1,22 +1,28 @@
 import { useEffect, useRef, useState } from "react";
+import { fetchProductView, TURNAROUND_ANGLES } from "../../api/views";
 import { buildDepthMap } from "./depth";
 import { ProductStage, type StageMode } from "./stage";
 
 type StageStatus = "loading" | "stage" | "flat" | "placeholder";
 
 /* Renders the product photo as a rotating 3D object on a WebGL2 canvas.
+   When `turnaround` is set, Gemini-generated turnaround frames stream in
+   from the backend and upgrade the rotation to real multi-view imagery.
    Falls back to the flat photo when the image is CORS-tainted or WebGL is
    unavailable, and to the shirt placeholder when there is no usable image. */
 export function ProductStageView({
   imageUrl,
   mode,
   rimColor,
-  placeholder
+  placeholder,
+  turnaround = null
 }: {
   imageUrl: string | null;
   mode: StageMode;
   rimColor?: string;
   placeholder: React.ReactNode;
+  /** Product title for generation context; null disables turnaround. */
+  turnaround?: { title: string | null } | null;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stageRef = useRef<ProductStage | null>(null);
@@ -72,6 +78,45 @@ export function ProductStageView({
   useEffect(() => {
     stageRef.current?.setMode(mode);
   }, [mode, status]);
+
+  // Stream Gemini turnaround frames into the stage. Kicked off as soon as the
+  // front view is up (during the scan), so the verdict usually lands on a
+  // ready full rotation. Each angle is independent; failures are non-fatal.
+  useEffect(() => {
+    if (status !== "stage" || !turnaround || !imageUrl) return;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    let absoluteUrl: URL;
+    try {
+      absoluteUrl = new URL(imageUrl, window.location.href);
+    } catch {
+      return;
+    }
+    if (!/^https?:$/.test(absoluteUrl.protocol)) return;
+    let cancelled = false;
+
+    for (const angle of TURNAROUND_ANGLES) {
+      fetchProductView(absoluteUrl.href, angle, turnaround.title)
+        .then(
+          (generated) =>
+            new Promise<{ angle: number; image: HTMLImageElement }>((resolve, reject) => {
+              const image = new Image();
+              image.onload = () => resolve({ angle: generated.angle, image });
+              image.onerror = () => reject(new Error("generated view failed to decode"));
+              image.src = generated.dataUrl;
+            })
+        )
+        .then(({ angle: viewAngle, image }) => {
+          if (cancelled) return;
+          const map = buildDepthMap(image);
+          if (map) stageRef.current?.addView(viewAngle, map);
+        })
+        .catch(() => undefined);
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, [status, imageUrl, turnaround?.title]);
 
   useEffect(() => {
     if (rimColor) stageRef.current?.setRimColor(rimColor);
