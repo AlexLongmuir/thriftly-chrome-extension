@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { fetchProductView, TURNAROUND_ANGLES } from "../../api/views";
 import { buildDepthMap } from "./depth";
+import { loadProductImage } from "./loadImage";
 import { ProductStage, type StageMode } from "./stage";
 
 type StageStatus = "loading" | "stage" | "flat" | "placeholder";
@@ -36,40 +37,42 @@ export function ProductStageView({
     }
     setStatus("loading");
     let cancelled = false;
-    const image = new Image();
-    image.crossOrigin = "anonymous";
-    image.onload = () => {
-      if (cancelled) return;
-      const canvas = canvasRef.current;
-      const map = canvas ? buildDepthMap(image) : null;
-      if (!map || !canvas) {
-        setStatus("flat");
-        return;
-      }
-      if (/stageDebug/.test(window.location.search)) {
-        (window as unknown as { __stageMap?: unknown }).__stageMap = map;
-      }
-      try {
-        stageRef.current = new ProductStage(canvas, map, {
-          reducedMotion: window.matchMedia("(prefers-reduced-motion: reduce)").matches
-        });
-        setStatus("stage");
-      } catch {
-        setStatus("flat");
-      }
-    };
-    image.onerror = () => {
-      if (cancelled) return;
-      // Retry without crossOrigin: some CDNs reject anonymous requests.
-      const plain = new Image();
-      plain.onload = () => !cancelled && setStatus("flat");
-      plain.onerror = () => !cancelled && setStatus("placeholder");
-      plain.src = imageUrl;
-    };
-    image.src = imageUrl;
+    let cleanupImage: (() => void) | null = null;
+
+    loadProductImage(imageUrl)
+      .then(({ image, cleanup }) => {
+        cleanupImage = cleanup;
+        if (cancelled) {
+          cleanup();
+          return;
+        }
+        const canvas = canvasRef.current;
+        const map = canvas ? buildDepthMap(image) : null;
+        if (!map || !canvas) {
+          // Image loaded but the canvas would taint (no usable bytes): show
+          // the flat photo instead of the rotating stage.
+          setStatus("flat");
+          return;
+        }
+        if (/stageDebug/.test(window.location.search)) {
+          (window as unknown as { __stageMap?: unknown }).__stageMap = map;
+        }
+        try {
+          stageRef.current = new ProductStage(canvas, map, {
+            reducedMotion: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+          });
+          setStatus("stage");
+        } catch {
+          setStatus("flat");
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setStatus("placeholder");
+      });
 
     return () => {
       cancelled = true;
+      cleanupImage?.();
       stageRef.current?.dispose();
       stageRef.current = null;
     };
