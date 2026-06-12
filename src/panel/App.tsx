@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { submitQualityCheck } from "../api/client";
 import { classifyProductEvidence } from "../shared/classification";
 import type {
@@ -27,7 +27,7 @@ const SHOW_DEBUG_EVIDENCE = import.meta.env.VITE_SCOUTED_DEBUG_EVIDENCE === "tru
 const SAMPLE_ANALYSIS = {
   overall_rating: 7.4,
   recommendation: "consider" as Recommendation,
-  verdict: "A real linen shirt at a fair price - you'll just be ironing it.",
+  verdict: "A real linen shirt at a fair price — you’ll just be ironing it.",
   positiveSignals: [
     {
       metric: "material" as SignalIconMetric,
@@ -113,8 +113,14 @@ export function App() {
       ) : status === "idle" ? (
         <>
           <div className="state-scroll">
-            <EmptyState onRunCheck={handleRunCheck} onShowTechnicalDetails={() => setActivePage("how-it-works")} />
+            <EmptyState onShowTechnicalDetails={() => setActivePage("how-it-works")} />
           </div>
+          <footer className="panel-footer empty-cta">
+            <button className="primary-button primary-button--wide" type="button" onClick={handleRunCheck}>
+              <ScanIcon />
+              <span>Analyse this item</span>
+            </button>
+          </footer>
         </>
       ) : isChecking ? (
         <>
@@ -134,7 +140,14 @@ export function App() {
         <>
           {error ? (
             <section className="notice notice--error">
-              <h2>Check Failed</h2>
+              <div className="notice-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 8.5v4.5" />
+                  <path d="M12 16.4v.1" />
+                  <path d="M10.3 4.2 3.6 16a2 2 0 0 0 1.7 3h13.4a2 2 0 0 0 1.7-3L13.7 4.2a2 2 0 0 0-3.4 0Z" />
+                </svg>
+              </div>
+              <h2>Couldn’t check this page</h2>
               <p>{error}</p>
               <button className="primary-button" type="button" onClick={handleRunCheck}>
                 Try again
@@ -148,18 +161,20 @@ export function App() {
             ) : (
               <>
                 {showAnalysisAction ? <AnalysisActionBar onRefresh={handleRunCheck} disabled={isChecking} /> : null}
-                <ProductHero
-                  title={productTitle}
-                  brand={productBrand}
-                  price={productPrice}
-                  imageUrl={productImage}
-                  verdict={analysis.verdict}
-                />
-                <SignsSection title="In its favour" tone="positive" items={analysis.verdict.good_signs} />
-                <SignsSection title="Worth watching" tone="negative" items={analysis.verdict.watch_outs} />
-                <SignsSection title="Couldn't verify" tone="neutral" items={analysis.verdict.unverified} />
-                <AlternativesSection approvedExamples={analysis.approved_examples} onViewAll={() => setActivePage("alternatives")} />
-                <HowScoresSection verdict={analysis.verdict} />
+                <div className="result-flow" key={verdict?.requestId ?? "result"}>
+                  <ProductHero
+                    title={productTitle}
+                    brand={productBrand}
+                    price={productPrice}
+                    imageUrl={productImage}
+                    verdict={analysis.verdict}
+                  />
+                  <SignsSection title="In its favour" tone="positive" items={analysis.verdict.good_signs} />
+                  <SignsSection title="Worth watching" tone="negative" items={analysis.verdict.watch_outs} />
+                  <SignsSection title="Couldn't verify" tone="neutral" items={analysis.verdict.unverified} />
+                  <AlternativesSection approvedExamples={analysis.approved_examples} onViewAll={() => setActivePage("alternatives")} />
+                  <HowScoresSection verdict={analysis.verdict} />
+                </div>
               </>
             )
           ) : extraction && classification ? (
@@ -210,12 +225,21 @@ function AnalysisActionBar({
   disabled: boolean;
 }) {
   return (
-    <div className="analysis-action-bar">
-      <div className="analysis-brand">Scouted</div>
-      <button className="refresh-button" type="button" onClick={onRefresh} disabled={disabled}>
+    <header className="panel-header">
+      <Wordmark />
+      <button className="pill-button" type="button" onClick={onRefresh} disabled={disabled}>
         <ScanIcon />
-        <span>Analyse This Item</span>
+        <span>Check again</span>
       </button>
+    </header>
+  );
+}
+
+function Wordmark() {
+  return (
+    <div className="wordmark">
+      <span className="wordmark-mark" aria-hidden="true" />
+      <span className="wordmark-text">Scouted</span>
     </div>
   );
 }
@@ -235,37 +259,37 @@ function ScanIcon() {
 function HowItWorksPage({ onBack }: { onBack: () => void }) {
   const steps = [
     {
-      title: "Extract Product Evidence",
+      title: "Extract product evidence",
       body:
         "The content script reads the rendered product page the shopper already has open, then pulls structured product data, Open Graph/meta tags, hydration blobs, targeted DOM snippets, visible text and image URLs. Facts are normalised into fields like title, brand, price, materials, care, construction, sizing, review claims and breadcrumbs, each with confidence rather than fake certainty.",
       chips: ["Structured Data", "Hydration Blobs", "Field Confidence"]
     },
     {
-      title: "Classify The Item",
+      title: "Classify the item",
       body:
         "Messy retailer data is converted into controlled schema fields: category, material family, brand tier, colour, style tags, use case and source confidence. Inferred fields are labelled separately from facts stated on the page, so the system knows what it knows and what it is guessing.",
       chips: ["Controlled Schema", "Labelled Inferences", "Source Confidence"]
     },
     {
-      title: "Enrich With Product Images",
+      title: "Enrich with product images",
       body:
         "Gemini-3.0-Flash reviews product images for diagnostic cues: silhouette, texture appearance, drape, seam or edge neatness, hardware, transparency, pilling, fuzz and missing close-ups. Vision is guarded: it cannot hard-claim fibre content, leather grade, exact construction, durability or authenticity from images alone.",
       chips: ["Gemini-3.0-Flash", "Visual Cues", "Claim Guardrails"]
     },
     {
-      title: "Research Outside Evidence",
+      title: "Research outside evidence",
       body:
         "An evidence agent searches for exact-product reviews, third-party retailer evidence, independent reviews, Reddit or forum patterns, competitor benchmarks, category benchmarks and material context. Sources are validated for confidence, relevance and specificity; weak search-spam pages, coupons, same-retailer repeats and irrelevant comparisons are rejected or kept out of scoring.",
       chips: ["Evidence Agent", "Source Rejection", "Repeated Themes"]
     },
     {
-      title: "Generate Shopper Verdict",
+      title: "Generate the shopper verdict",
       body:
         "Gpt-5.4-Mini generates the quality, value, durability, style, confidence, recommendation, good signs, watch-outs and short decision summary from the evidence packet. The backend validates the structure, ranges, evidence discipline and visual-claim safety rules before showing the result.",
       chips: ["Gpt-5.4-Mini", "Structured Json", "Backend Validation"]
     },
     {
-      title: "Retrieve Better Alternatives",
+      title: "Retrieve better alternatives",
       body:
         "The recommendations layer uses a Text-Embedding-3-Small product intelligence blob for similarity retrieval, then ranks items by matching category, use case, style, material, price band, stronger scores and enough confidence. Approved examples act as cold-start anchors, while analysed products compound into a more useful recommendation base.",
       chips: ["Text Embedding", "Similarity Retrieval", "Approved Examples"]
@@ -281,15 +305,15 @@ function HowItWorksPage({ onBack }: { onBack: () => void }) {
   ];
 
   return (
-    <section className="how-page">
+    <section className="how-page page-enter">
       <button className="back-button" type="button" onClick={onBack}>
         <span className="chevron chevron--back" aria-hidden="true" />
         <span>Back</span>
       </button>
 
       <div className="how-intro">
-        <p className="eyebrow">Backend Pipeline</p>
-        <h2>How Scouted Turns A Product Page Into A Buying Verdict</h2>
+        <p className="eyebrow">Backend pipeline</p>
+        <h2>How Scouted turns a product page into a buying verdict</h2>
         <p>
           The extension separates extraction, classification, visual evidence, outside research, scoring and recommendations so the final call is useful without hiding the evidence.
         </p>
@@ -313,7 +337,7 @@ function HowItWorksPage({ onBack }: { onBack: () => void }) {
       </div>
 
       <section className="panel-section technical-note-list">
-        <SectionHeader title="What This Shows Technically" />
+        <SectionHeader title="What this shows technically" />
         <div>
           {technicalNotes.map((note) => (
             <p key={note}>{note}</p>
@@ -324,21 +348,19 @@ function HowItWorksPage({ onBack }: { onBack: () => void }) {
   );
 }
 
-function EmptyState({
-  onRunCheck,
-  onShowTechnicalDetails
-}: {
-  onRunCheck: () => void;
-  onShowTechnicalDetails: () => void;
-}) {
+function EmptyState({ onShowTechnicalDetails }: { onShowTechnicalDetails: () => void }) {
   return (
     <section className="empty-preview-state">
+      <header className="empty-masthead">
+        <Wordmark />
+      </header>
       <div className="empty-hook">
-        <h1>Is it actually<br />worth buying?</h1>
-        <p>Scouted reads the product page and real buyer feedback, then shows what's good, what's risky, and whether it's worth buying.</p>
-        <button className="primary-button primary-button--wide empty-hero-button" type="button" onClick={onRunCheck}>
-          Analyse this item
-        </button>
+        <h1>
+          Is it <em>actually</em>
+          <br />
+          worth buying?
+        </h1>
+        <p>Scouted reads the product page and real buyer feedback, then shows what’s good, what’s risky, and whether it’s worth it.</p>
       </div>
       <SampleAnalysisCard />
       <HowScoutedWorks onShowTechnicalDetails={onShowTechnicalDetails} />
@@ -348,25 +370,27 @@ function EmptyState({
 
 function SampleAnalysisCard() {
   const score = scoreOutOf100(SAMPLE_ANALYSIS.overall_rating);
-  const tone = scoreTone(score);
+  const tone = recommendationTone(SAMPLE_ANALYSIS.recommendation);
 
   return (
     <section className="sample-analysis" aria-label="Sample analysis">
-      <div className="sample-tag"><span aria-hidden="true" />Sample analysis</div>
+      <div className="sample-tag">Sample analysis</div>
       <div className="sample-score-row">
-        <div className={`sample-grade grade-tile--${tone}`}>
-          <strong>{gradeFor(SAMPLE_ANALYSIS.overall_rating)}</strong>
-          <span>{score}/100</span>
+        <div className={`grade-tile grade-tile--${tone}`}>
+          <div className="grade-score">
+            {score}
+            <small>/100</small>
+          </div>
         </div>
         <div className="sample-verdict-copy">
           <span className={`recommendation-tag recommendation-tag--${SAMPLE_ANALYSIS.recommendation}`}>
             {recommendationLabel(SAMPLE_ANALYSIS.recommendation)}
           </span>
-          <blockquote>"{SAMPLE_ANALYSIS.verdict}"</blockquote>
+          <blockquote>“{SAMPLE_ANALYSIS.verdict}”</blockquote>
         </div>
       </div>
       <section className="panel-section sign-section">
-        <SectionHeader title="Good Signs" />
+        <SectionHeader title="Good signs" />
         <div className="sign-list">
           {SAMPLE_ANALYSIS.positiveSignals.map((signal) => (
             <SampleSignalRow key={signal.title} tone="positive" metric={signal.metric} title={signal.title} body={signal.body} />
@@ -517,12 +541,22 @@ function LoadingState({
 function TrackerStep({ state, number, title, body }: { state: "done" | "active" | "pending"; number: number; title: string; body: string }) {
   return (
     <div className={`tracker-step tracker-step--${state}`}>
-      <span className="tracker-marker">{state === "done" ? "✓" : state === "active" ? <span className="tracker-spinner" aria-hidden="true" /> : number}</span>
+      <span className="tracker-marker">
+        {state === "done" ? <CheckIcon /> : state === "active" ? <span className="tracker-spinner" aria-hidden="true" /> : number}
+      </span>
       <div>
         <strong>{title}</strong>
         <p>{body}</p>
       </div>
     </div>
+  );
+}
+
+function CheckIcon() {
+  return (
+    <svg className="check-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path className="check-icon-path" d="M3.6 8.4l3 3 5.8-6.8" />
+    </svg>
   );
 }
 
@@ -562,14 +596,14 @@ function ProductHero({
   verdict: Stage6Verdict;
 }) {
   const score = scoreOutOf100(verdict.overall_rating);
+  const displayScore = useCountUp(score);
+  const tone = recommendationTone(verdict.recommendation);
   const verdictLine = conciseSentence(verdict.recommendation_summary || verdict.summary);
 
   return (
     <section className="scouted-hero">
       <div className="scouted-product-row">
-        <div className="scouted-product-image" aria-label={imageUrl ? "Product image" : "Product image unavailable"}>
-          {imageUrl ? <img src={imageUrl} alt="" /> : <ShirtPlaceholder />}
-        </div>
+        <TiltImage imageUrl={imageUrl} />
         <div className="scouted-product-copy">
           <p>{toTitleCase(brand)}</p>
           <h2>{title}</h2>
@@ -578,16 +612,89 @@ function ProductHero({
       </div>
       <div className="result-divider" />
       <div className="rating-row">
-        <div className="grade-tile">
-          <div className="grade-score">{score}<small>/100</small></div>
+        <div className={`grade-tile grade-tile--${tone}`}>
+          <div className="grade-score">
+            {displayScore}
+            <small>/100</small>
+          </div>
         </div>
         <div className="rating-right">
-          <span className={`recommendation-tag recommendation-tag--${verdict.recommendation}`}>{recommendationLabel(verdict.recommendation)}</span>
-          <p className="verdict-line">"{verdictLine}"</p>
+          <div className="rating-tags">
+            <span className={`recommendation-tag recommendation-tag--${verdict.recommendation}`}>{recommendationLabel(verdict.recommendation)}</span>
+            <span className="confidence-note">{toTitleCase(verdict.confidence_label)} confidence</span>
+          </div>
+          <p className="verdict-line">“{verdictLine}”</p>
         </div>
       </div>
     </section>
   );
+}
+
+function TiltImage({ imageUrl }: { imageUrl: string | null }) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  function handleMove(event: React.PointerEvent<HTMLDivElement>) {
+    const node = ref.current;
+    if (!node || prefersReducedMotion()) return;
+    const rect = node.getBoundingClientRect();
+    const offsetX = (event.clientX - rect.left) / rect.width - 0.5;
+    const offsetY = (event.clientY - rect.top) / rect.height - 0.5;
+    node.style.setProperty("--tilt-x", `${(-offsetY * 9).toFixed(2)}deg`);
+    node.style.setProperty("--tilt-y", `${(offsetX * 11).toFixed(2)}deg`);
+    node.style.setProperty("--glare-x", `${(offsetX * 100 + 50).toFixed(1)}%`);
+    node.style.setProperty("--glare-y", `${(offsetY * 100 + 50).toFixed(1)}%`);
+    node.style.setProperty("--glare-opacity", "1");
+  }
+
+  function handleLeave() {
+    const node = ref.current;
+    if (!node) return;
+    node.style.setProperty("--tilt-x", "0deg");
+    node.style.setProperty("--tilt-y", "0deg");
+    node.style.setProperty("--glare-opacity", "0");
+  }
+
+  return (
+    <div
+      className="scouted-product-image"
+      ref={ref}
+      onPointerMove={handleMove}
+      onPointerLeave={handleLeave}
+      aria-label={imageUrl ? "Product image" : "Product image unavailable"}
+    >
+      <div className="tilt-inner">
+        {imageUrl ? <img src={imageUrl} alt="" /> : <ShirtPlaceholder />}
+        <span className="tilt-glare" aria-hidden="true" />
+      </div>
+    </div>
+  );
+}
+
+function prefersReducedMotion(): boolean {
+  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+function useCountUp(target: number, duration = 950): number {
+  const [value, setValue] = useState(() => (prefersReducedMotion() ? target : 0));
+
+  useEffect(() => {
+    if (prefersReducedMotion()) {
+      setValue(target);
+      return;
+    }
+    let frame = 0;
+    const start = performance.now();
+    const tick = (now: number) => {
+      const progress = Math.min(1, (now - start) / duration);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      setValue(Math.round(target * eased));
+      if (progress < 1) frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [target, duration]);
+
+  return value;
 }
 
 function SignsSection({ title, tone, items }: { title: string; tone: SignalTone; items: ShopperSignal[] }) {
@@ -848,7 +955,7 @@ function AlternativesPage({ approvedExamples, onBack }: { approvedExamples: Matc
   const alternatives = buildAlternatives(approvedExamples);
 
   return (
-    <section className="alternatives-page">
+    <section className="alternatives-page page-enter">
       <button className="back-button" type="button" onClick={onBack}>
         <span className="chevron chevron--back" aria-hidden="true" />
         <span>Alternatives</span>
@@ -892,7 +999,7 @@ function AlternativeRow({ alternative }: { alternative: AlternativeItem }) {
   return (
     <button className="alternative-row" type="button" onClick={handleOpenAlternative}>
       <div className="alternative-thumb">
-        {alternative.thumbnail ? <img src={alternative.thumbnail} alt="" /> : <span />}
+        {alternative.thumbnail ? <img src={alternative.thumbnail} alt="" /> : <ShirtPlaceholder />}
       </div>
       <div className="alternative-copy">
         <span>{toTitleCase(alternative.brand)}</span>
@@ -932,8 +1039,10 @@ function HowScoresSection({ verdict }: { verdict: Stage6Verdict }) {
                 <ChevronDownIcon />
               </button>
               <div className="score-card-body" aria-hidden={!isOpen}>
-                <Meter value={score} max={100} />
-                <p>{row.verdict.verdict}</p>
+                <div className="score-card-body-inner">
+                  <Meter value={isOpen ? score : 0} max={100} tone={gradeTone(row.score)} />
+                  <p>{row.verdict.verdict}</p>
+                </div>
               </div>
             </div>
           );
@@ -1081,10 +1190,11 @@ function scoreOutOf100(score: number): number {
   return Math.round(score * 10);
 }
 
-function scoreTone(score: number): "positive" | "neutral" | "warning" {
-  if (score >= 85) return "positive";
-  if (score >= 55) return "neutral";
-  return "warning";
+function recommendationTone(recommendation: Recommendation): "positive" | "neutral" | "warning" | "destructive" {
+  if (recommendation === "excellent_pick" || recommendation === "worth_buying") return "positive";
+  if (recommendation === "consider") return "neutral";
+  if (recommendation === "poor_value" || recommendation === "skip") return "warning";
+  return "destructive";
 }
 
 function DebugPanel({
@@ -1176,11 +1286,11 @@ function Field({ label, value }: { label: string; value: string | null }) {
   );
 }
 
-function Meter({ value, max }: { value: number; max: number }) {
+function Meter({ value, max, tone }: { value: number; max: number; tone?: "positive" | "neutral" | "warning" }) {
   const percentage = Math.max(0, Math.min(100, (value / max) * 100));
   return (
     <div className="meter" aria-hidden="true">
-      <span style={{ width: `${percentage}%` }} />
+      <span className={tone ? `meter-fill--${tone}` : undefined} style={{ width: `${percentage}%` }} />
     </div>
   );
 }
