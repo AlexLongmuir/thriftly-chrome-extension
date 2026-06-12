@@ -21,6 +21,7 @@ export function ProductStageView({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stageRef = useRef<ProductStage | null>(null);
   const [status, setStatus] = useState<StageStatus>(imageUrl ? "loading" : "placeholder");
+  const [spun, setSpun] = useState(false);
 
   useEffect(() => {
     if (!imageUrl) {
@@ -103,7 +104,10 @@ export function ProductStageView({
   function handlePointerDown(event: React.PointerEvent<HTMLCanvasElement>) {
     event.currentTarget.setPointerCapture(event.pointerId);
     stageRef.current?.pointerDown(event.clientX);
+    setSpun(true);
   }
+
+  const showHint = mode === "orbit" && status === "stage" && !spun;
 
   return (
     <div className={`product-stage product-stage--${mode}`} aria-label="Product preview">
@@ -122,6 +126,17 @@ export function ProductStageView({
         onPointerUp={() => stageRef.current?.pointerUp()}
         onPointerCancel={() => stageRef.current?.pointerUp()}
       />
+      {showHint ? (
+        <span className="stage-hint" aria-hidden="true">
+          <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round">
+            <path d="M2 7a5 5 0 0 1 9-3" />
+            <path d="M11 1.6V4h-2.4" />
+            <path d="M12 7a5 5 0 0 1-9 3" />
+            <path d="M3 12.4V10h2.4" />
+          </svg>
+          <span>Drag to spin</span>
+        </span>
+      ) : null}
     </div>
   );
 }

@@ -24,7 +24,7 @@ const FOV = (26 * Math.PI) / 180;
 const CAMERA_TILT = (-10 * Math.PI) / 180;
 const SCAN_POSE = -0.38;
 const ORBIT_SPEED = 0.55; // rad/s
-const SCAN_PERIOD = 2.2; // s per sweep
+const SCAN_PERIOD = 2.6; // s per sweep
 
 const VERTEX_SHADER = `#version 300 es
 precision highp float;
@@ -139,10 +139,15 @@ void main() {
   // Back shell reads as the shaded reverse of the item.
   if (uSide < 0.0) color *= 0.92;
 
-  // Scan band: soft light sweep with a crisp leading line.
-  float band = exp(-pow((vUv.y - uScanY) * 16.0, 2.0));
-  float line = exp(-pow((vUv.y - uScanY) * 150.0, 2.0));
-  vec3 scanGlow = vec3(0.62, 0.74, 0.86) * band * 0.30 + vec3(0.92, 0.97, 1.0) * line * 0.55;
+  // Scan: a cool analytic band sweeps top to bottom. Material below the
+  // leading line is slightly dimmed ("not yet read") so the motion stays
+  // legible even on white fabric.
+  float rel = vUv.y - uScanY;
+  float band = exp(-pow(rel * 22.0, 2.0));
+  float line = exp(-pow(rel * 170.0, 2.0));
+  float ahead = smoothstep(0.0, 0.08, rel);
+  color *= 1.0 - ahead * 0.055 * uScanActive;
+  vec3 scanGlow = vec3(0.4, 0.58, 0.74) * band * 0.34 + vec3(0.88, 0.96, 1.0) * line * 0.62;
   color += scanGlow * uScanActive;
 
   color *= mix(0.97, 1.0, uIntro);

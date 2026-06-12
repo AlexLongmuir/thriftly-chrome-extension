@@ -51,7 +51,10 @@ const SCENARIOS = [
       await clickCta(page);
       await page.waitForSelector(".scouted-hero", { timeout: 8000 });
       await sleep(1600);
-      await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+      await page.evaluate(() => {
+        const scroller = document.querySelector(".state-scroll") ?? document.scrollingElement;
+        scroller.scrollTo(0, scroller.scrollHeight);
+      });
       await sleep(400);
     }
   },

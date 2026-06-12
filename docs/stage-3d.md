@@ -42,9 +42,31 @@ timing, transition continuity frame to frame.
 ## Status
 
 - [x] Baseline screenshots
-- [ ] depth.ts + stage.ts + ProductStage.tsx
-- [ ] Persistent analysis view + view transitions
-- [ ] Loading state rebuild around the stage
-- [ ] Loaded hero rebuild around the stage
-- [ ] Motion audit + pixel fixes
-- [ ] typecheck / tests / build green
+- [x] depth.ts + stage.ts + ProductStage.tsx
+- [x] Persistent analysis view + view transitions
+- [x] Loading state rebuild around the stage (scan beam + tracker)
+- [x] Loaded hero rebuild around the stage (orbit + drag hint + verdict block)
+- [x] Motion audit + pixel fixes (320/360/420 stills, transition frame strips)
+- [x] typecheck / tests / build green
+
+## Findings worth keeping
+
+- Headless screenshot waits must not use `networkidle0`: the WebGL canvas
+  keeps the renderer busy and Vite's websocket stays open.
+- White-on-white studio photos defeat global colour thresholds; border
+  flood-fill with a Sobel gradient barrier segments them reliably.
+- The work canvas must be unpadded during segmentation: transparent padding
+  poisons the border background sample and blocks the flood at the photo edge.
+- A ground-plane contact shadow is invisible at a 10° camera tilt; a
+  camera-facing ellipse is what actually reads as the soft "Apple" shadow.
+- `prefers-reduced-motion`: stage renders one static lit frame, no loop;
+  view transitions are skipped entirely.
+
+## Debug tooling
+
+- `node scripts/depth-lab.mjs [imageUrl]` — dumps the cutout composite and
+  depth field for any product photo, plus coverage stats.
+- `node scripts/stage-frames.mjs --view empty|loaded` — cropped rotation
+  frame strips of the live stage.
+- `?stageDebug=alpha` (+ `&stageFlat=1`) on the preview URL — shader debug
+  view of sampled alpha/depth, frozen pose.

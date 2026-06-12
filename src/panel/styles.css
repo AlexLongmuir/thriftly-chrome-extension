@@ -39,8 +39,6 @@
   --destructive: #a8412e;
   --destructive-muted: #f6e8e2;
 
-  --skeleton: #e7e0d2;
-  --skeleton-highlight: #f6f2e9;
   --loading-progress-track: #ddd2c2;
 
   --radius-xs: 7px;
@@ -611,8 +609,28 @@ button {
   margin: -10px -20px 0;
   padding: 12px 20px 10px;
   background: color-mix(in srgb, var(--background) 76%, transparent);
-  -webkit-backdrop-filter: blur(14px) saturate(1.25);
-  backdrop-filter: blur(14px) saturate(1.25);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 1px 0 var(--hairline);
+}
+
+/* The header chrome (tint + hairline) only appears once content actually
+   scrolls underneath it. */
+@supports (animation-timeline: scroll()) {
+  .analysis-header {
+    background: transparent;
+    box-shadow: 0 1px 0 transparent;
+    animation: headerChrome linear both;
+    animation-timeline: scroll(nearest);
+    animation-range: 0 56px;
+  }
+}
+
+@keyframes headerChrome {
+  to {
+    background: color-mix(in srgb, var(--background) 76%, transparent);
+    box-shadow: 0 1px 0 var(--hairline);
+  }
 }
 
 .analysis-header-note {
@@ -681,6 +699,33 @@ button {
 .product-stage-placeholder .shirt-placeholder {
   width: 84px;
   height: 94px;
+}
+
+.stage-hint {
+  position: absolute;
+  bottom: 4px;
+  left: 50%;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-radius: 999px;
+  padding: 4px 10px;
+  background: color-mix(in srgb, var(--surface-muted) 72%, transparent);
+  color: var(--muted-foreground);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  line-height: 1;
+  pointer-events: none;
+  transform: translateX(-50%);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+  animation: hintIn 600ms var(--ease-out) 1100ms both;
+}
+
+.stage-hint svg {
+  width: 11px;
+  height: 11px;
 }
 
 .stage-copy {
@@ -909,7 +954,7 @@ button {
 
 .rating-row {
   display: flex;
-  align-items: stretch;
+  align-items: flex-start;
   gap: 15px;
 }
 
@@ -917,7 +962,7 @@ button {
   position: relative;
   display: grid;
   width: 74px;
-  min-height: 74px;
+  height: 74px;
   flex: 0 0 auto;
   overflow: hidden;
   place-content: center;
@@ -2130,16 +2175,6 @@ input[type="range"] {
   }
 }
 
-@keyframes skeletonPulse {
-  0% {
-    background-position: 120% 0;
-  }
-
-  100% {
-    background-position: -120% 0;
-  }
-}
-
 @keyframes progressSweep {
   0%,
   100% {
@@ -2154,6 +2189,18 @@ input[type="range"] {
 @keyframes sheenSweep {
   to {
     transform: translateX(130%);
+  }
+}
+
+@keyframes hintIn {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
   }
 }
 
@@ -2248,18 +2295,12 @@ input[type="range"] {
     gap: 12px;
   }
 
-  .sample-grade {
-    width: 66px;
-    height: 66px;
+  .analysis-stage {
+    height: 196px;
   }
 
-  .sample-grade strong {
-    font-size: 22px;
-  }
-
-  .scouted-product-image {
-    width: 68px;
-    height: 78px;
+  .sample-stage .product-stage {
+    height: 146px;
   }
 
   .rating-row {
@@ -2268,7 +2309,7 @@ input[type="range"] {
 
   .grade-tile {
     width: 66px;
-    min-height: 66px;
+    height: 66px;
   }
 
   .grade-score {
