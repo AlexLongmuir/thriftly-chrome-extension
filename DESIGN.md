@@ -188,22 +188,50 @@ Current loaded-state anchors to preserve:
 
 ## Motion And Loading
 
-Motion should be minimal and functional:
+Motion is choreographed but restrained: the 3D stage and the view transitions
+are the two sanctioned theatrical moments; everything else stays functional.
 
 - Button active state may use `scale(0.98)`.
 - Hover/focus colour transitions: 100-200ms.
-- Loading skeletons: subtle pulse or shimmer only.
-- Progress indicator: small pulse is acceptable.
-- Avoid large panel slides, bouncing elements, animated gradients, or theatrical AI "thinking" effects.
-
-Skeleton rules:
-
-- Skeleton shapes must match the loaded result layout.
-- Show a product-image block, title lines, grade/score placeholder, verdict text lines, and row-list placeholders.
-- Do not use generic grid card skeletons.
+- State swaps morph via the View Transitions API (see State Transitions).
+- The loading state is the live product stage in scan mode plus the step
+  tracker — no generic skeletons.
+- Progress indicator: the 4px footer sweep.
+- Score count-up, grade-tile sheen sweep, staggered section entrances and
+  drawn tracker checkmarks are part of the loaded-state choreography.
+- Everything nonessential respects `prefers-reduced-motion`.
 - Loading state copy should be calm and specific: reading page, checking material signals, assessing value, building verdict.
 
 ## Component Vocabulary
+
+### Product Stage (3D)
+
+The product image is presented as a real-time 3D object on a WebGL2 stage
+(`src/panel/stage/`): depth is estimated client-side from the single product
+photo, and the item renders as a soft closed volume with studio lighting and a
+camera-facing contact shadow, directly on the cream paper — no card box, no
+border.
+
+Rules:
+
+- One stage per state, full width: ~212px in the analysis view, ~158px in the
+  empty-state sample. The same component instance persists from loading to
+  loaded so the object is physically continuous.
+- Loading uses `scan` mode: locked three-quarter pose, an analytic blue band
+  sweeps the item, material below the line is slightly dimmed.
+- Loaded uses `orbit` mode: slow turntable, drag-to-spin with inertia, rim
+  light eased to the verdict tone with a brief pulse as the verdict lands.
+- Fallbacks are mandatory: flat photo with drop shadow when the image is
+  CORS-tainted or WebGL is unavailable; shirt placeholder when there is no
+  image; one static lit frame under reduced motion.
+- The stage must never get a background, border, or card treatment.
+
+### State Transitions
+
+Status changes (empty → loading → loaded → error) go through
+`withViewTransition` (View Transitions API). Named groups: `stage`,
+`product-copy`, `wordmark`, `dock`. Sub-page navigation keeps the lighter
+`pageIn` slide. Reduced motion skips view transitions entirely.
 
 ### Header
 

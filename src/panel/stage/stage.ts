@@ -75,6 +75,7 @@ uniform float uOrbitMix;
 uniform float uScanActive;
 uniform float uScanY;
 uniform float uIntro;
+uniform float uRimBoost;
 uniform vec3 uRimColor;
 uniform vec3 uCameraPos;
 uniform float uDebugAlpha;
@@ -132,7 +133,7 @@ void main() {
   float facing = 1.0 - abs(dot(normal, viewDir));
   float edge = pow(facing, 3.0);
   light *= 1.0 - edge * 0.26;
-  float rim = pow(facing, 3.4) * mix(0.14, 0.3, uOrbitMix);
+  float rim = pow(facing, 3.4) * mix(0.14, 0.3, uOrbitMix) * (1.0 + uRimBoost * 1.7);
 
   vec3 color = albedo.rgb * light + vec3(spec) + uRimColor * rim;
 
@@ -202,6 +203,8 @@ export class ProductStage {
   private mode: StageMode = "scan";
   private reducedMotion: boolean;
   private rimColor: [number, number, number] = [0.86, 0.84, 0.8];
+  private rimTarget: [number, number, number] = [0.86, 0.84, 0.8];
+  private rimPulse = 0;
 
   private angle = SCAN_POSE;
   private velocity = 0;
@@ -275,8 +278,10 @@ export class ProductStage {
     if (this.mode === mode) return;
     this.mode = mode;
     if (mode === "orbit" && !this.reducedMotion) {
-      // Lift-off: a touch of extra spin as the verdict lands, easing to cruise.
+      // Lift-off: a touch of extra spin as the verdict lands, easing to
+      // cruise, with a brief rim-light pulse in the verdict tone.
       this.velocity = ORBIT_SPEED * 2.6;
+      this.rimPulse = 1;
     }
     this.requestStaticFrame();
   }
@@ -285,7 +290,10 @@ export class ProductStage {
     const parsed = /^#?([0-9a-f]{6})$/i.exec(hex);
     if (!parsed) return;
     const value = parseInt(parsed[1], 16);
-    this.rimColor = [((value >> 16) & 255) / 255, ((value >> 8) & 255) / 255, (value & 255) / 255];
+    this.rimTarget = [((value >> 16) & 255) / 255, ((value >> 8) & 255) / 255, (value & 255) / 255];
+    if (this.reducedMotion || !this.running) {
+      this.rimColor = [...this.rimTarget];
+    }
     this.requestStaticFrame();
   }
 
@@ -365,6 +373,10 @@ export class ProductStage {
   private step(dt: number) {
     this.intro = approach(this.intro, 1, dt * 2.6);
     this.bobClock += dt;
+    this.rimPulse = approach(this.rimPulse, 0, dt * 1.6);
+    for (let channel = 0; channel < 3; channel++) {
+      this.rimColor[channel] = approach(this.rimColor[channel], this.rimTarget[channel], dt * 3);
+    }
 
     const targetOrbit = this.mode === "orbit" ? 1 : 0;
     this.orbitMix = approach(this.orbitMix, targetOrbit, dt * 2.2);
@@ -458,6 +470,7 @@ export class ProductStage {
     setFloat(gl, this.meshProgram, "uOrbitMix", this.orbitMix);
     setFloat(gl, this.meshProgram, "uIntro", easeOutCubic(this.intro));
     setVec3(gl, this.meshProgram, "uRimColor", this.rimColor);
+    setFloat(gl, this.meshProgram, "uRimBoost", this.rimPulse);
     setVec3(gl, this.meshProgram, "uCameraPos", [0, cameraY, cameraZ]);
 
     const scanPhase = (this.scanClock % SCAN_PERIOD) / SCAN_PERIOD;
