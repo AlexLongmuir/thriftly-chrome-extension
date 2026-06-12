@@ -28,12 +28,12 @@ async function frames(name, action, count, intervalMs) {
 }
 
 // 1. Empty -> loading -> loaded sequence
-await page.goto(`${BASE}/preview.html?view=loaded`, { waitUntil: "networkidle0" });
+await page.goto(`${BASE}/preview.html?view=loaded`, { waitUntil: "domcontentloaded" });
 await sleep(400);
 await frames("check-flow", () => page.click(".empty-cta button"), 16, 140);
 
 // 2. Accordion open/close
-await page.goto(`${BASE}/preview.html?view=loaded`, { waitUntil: "networkidle0" });
+await page.goto(`${BASE}/preview.html?view=loaded`, { waitUntil: "domcontentloaded" });
 await sleep(300);
 await page.click(".empty-cta button");
 await page.waitForSelector(".scouted-hero", { timeout: 8000 });

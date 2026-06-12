@@ -19,6 +19,7 @@ Scouted by Thriftly helps you make smarter clothing purchases by analysing produ
 - Stage 5 visual-enrichment request metadata for product images, with guardrails preventing image-only claims about fabric quality, construction, authenticity, or durability
 - Vercel serverless Stage 5 endpoint at `api/quality-check.ts`
 - Guarded Gemini visual enrichment with server-side API keys only
+- 3D rotating product stage in the side panel (`src/panel/stage/`), with Gemini-generated turnaround views served by `api/product-views.ts` and cached in Supabase
 
 ## Run locally
 
@@ -190,6 +191,19 @@ VITE_QUALITY_CHECK_API_URL=https://your-project.vercel.app/api/quality-check npm
 ```
 
 CORS is handled by `api/quality-check.ts` for `chrome-extension://...`, local dev origins, and command-line requests.
+
+### Turnaround view generation (`api/product-views.ts`)
+
+The 3D product stage requests Gemini-generated turnaround frames (60°, 120°, 180°, 240°, 300°; 0° is the original photo) from `api/product-views.ts`, one angle per request. It reuses `GEMINI_API_KEY` — no extra key is needed. Optional environment variables:
+
+```bash
+PRODUCT_VIEWS_IMAGE_MODEL=gemini-3.0-flash-image   # image-output Gemini model
+PRODUCT_VIEWS_CACHE_TTL_DAYS=45                    # Supabase cache lifetime
+```
+
+Generated views are cached per image + angle in the `product_view_cache` Supabase table (`supabase/migrations/202606120001_product_view_cache.sql`). Apply the migration with `supabase db push` or by running the SQL in the Supabase dashboard. Without Supabase configured the endpoint still works, it just regenerates on every check.
+
+The extension derives the endpoint URL from `VITE_QUALITY_CHECK_API_URL` (sibling `product-views` path); override with `VITE_PRODUCT_VIEWS_API_URL` if it lives elsewhere. If the endpoint is missing or a view fails, the stage falls back to rotating the single-photo relief — turnaround is a progressive enhancement.
 
 Model routing for the backend:
 

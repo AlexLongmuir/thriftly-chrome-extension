@@ -39,8 +39,6 @@
   --destructive: #a8412e;
   --destructive-muted: #f6e8e2;
 
-  --skeleton: #e7e0d2;
-  --skeleton-highlight: #f6f2e9;
   --loading-progress-track: #ddd2c2;
 
   --radius-xs: 7px;
@@ -186,6 +184,7 @@ button {
   font-size: 18px;
   font-weight: 620;
   line-height: 1;
+  view-transition-name: wordmark;
 }
 
 .wordmark-mark {
@@ -410,6 +409,7 @@ button {
 
 .empty-cta .primary-button {
   animation: riseIn 520ms var(--ease-out) 240ms both;
+  view-transition-name: dock;
 }
 
 .empty-masthead {
@@ -455,6 +455,30 @@ button {
   display: grid;
   gap: 12px;
   text-align: left;
+}
+
+.sample-stage {
+  display: grid;
+  gap: 2px;
+  view-transition-name: stage;
+}
+
+.sample-stage .product-stage {
+  height: 158px;
+}
+
+.sample-stage .product-stage-placeholder .shirt-placeholder {
+  width: 64px;
+  height: 72px;
+}
+
+.sample-stage-caption {
+  color: var(--muted-foreground);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.015em;
+  line-height: 1.3;
+  text-align: center;
 }
 
 .sample-tag {
@@ -564,68 +588,191 @@ button {
   line-height: 1.45;
 }
 
-/* 5. Loading state ------------------------------------------------------------ */
+/* 5. Analysis view: 3D stage, loading tracker --------------------------------- */
+
+.analysis-view {
+  display: grid;
+  width: 100%;
+  max-width: 380px;
+  margin: 0 auto;
+  gap: 0;
+}
+
+.state-scroll--analysis {
+  padding-top: 10px;
+}
+
+.analysis-header {
+  position: sticky;
+  z-index: 4;
+  top: -10px;
+  margin: -10px -20px 0;
+  padding: 12px 20px 10px;
+  background: color-mix(in srgb, var(--background) 76%, transparent);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 1px 0 var(--hairline);
+}
+
+/* The header chrome (tint + hairline) only appears once content actually
+   scrolls underneath it. */
+@supports (animation-timeline: scroll()) {
+  .analysis-header {
+    background: transparent;
+    box-shadow: 0 1px 0 transparent;
+    animation: headerChrome linear both;
+    animation-timeline: scroll(nearest);
+    animation-range: 0 56px;
+  }
+}
+
+@keyframes headerChrome {
+  to {
+    background: color-mix(in srgb, var(--background) 76%, transparent);
+    box-shadow: 0 1px 0 var(--hairline);
+  }
+}
+
+.analysis-header-note {
+  color: var(--muted-foreground);
+  font-size: 11.5px;
+  font-weight: 680;
+  letter-spacing: 0.01em;
+}
+
+/* The WebGL product stage. The object renders with its own contact shadow on
+   the bare cream paper: no card box, no border. */
+
+.analysis-stage {
+  width: 100%;
+  height: 212px;
+  margin-top: 4px;
+  view-transition-name: stage;
+}
+
+.product-stage {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  touch-action: pan-y;
+}
+
+.product-stage-canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  transition: opacity 640ms var(--ease-out);
+}
+
+.product-stage-canvas[data-active="true"] {
+  opacity: 1;
+}
+
+.product-stage--orbit .product-stage-canvas[data-active="true"] {
+  cursor: grab;
+}
+
+.product-stage--orbit .product-stage-canvas[data-active="true"]:active {
+  cursor: grabbing;
+}
+
+.product-stage-flat {
+  position: absolute;
+  inset: 8% 18% 12%;
+  width: 64%;
+  height: 80%;
+  margin: 0 auto;
+  object-fit: contain;
+  filter: drop-shadow(0 22px 18px rgb(28 30 33 / 0.18));
+}
+
+.product-stage-placeholder {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+}
+
+.product-stage-placeholder .shirt-placeholder {
+  width: 84px;
+  height: 94px;
+}
+
+.stage-hint {
+  position: absolute;
+  bottom: 4px;
+  left: 50%;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-radius: 999px;
+  padding: 4px 10px;
+  background: color-mix(in srgb, var(--surface-muted) 72%, transparent);
+  color: var(--muted-foreground);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  line-height: 1;
+  pointer-events: none;
+  transform: translateX(-50%);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+  animation: hintIn 600ms var(--ease-out) 1100ms both;
+}
+
+.stage-hint svg {
+  width: 11px;
+  height: 11px;
+}
+
+.stage-copy {
+  display: grid;
+  justify-items: center;
+  margin-top: 10px;
+  padding: 0 8px;
+  text-align: center;
+  view-transition-name: product-copy;
+}
+
+.stage-copy p {
+  color: var(--muted-foreground);
+  font-size: 11.5px;
+  font-weight: 720;
+  letter-spacing: 0.02em;
+  line-height: 1.3;
+}
+
+.stage-copy h2 {
+  margin-top: 3px;
+  color: var(--foreground);
+  font-size: 17px;
+  font-weight: 760;
+  line-height: 1.24;
+  text-wrap: balance;
+}
+
+.stage-copy span {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+/* Loading tracker */
 
 .loading-state {
   display: grid;
   width: 100%;
   max-width: 342px;
-  margin: 0 auto;
+  margin: 22px auto 0;
   gap: 22px;
-}
-
-.loading-state > * {
   animation: riseIn 520ms var(--ease-out) both;
-}
-
-.loading-state > :nth-child(2) { animation-delay: 80ms; }
-.loading-state > :nth-child(3) { animation-delay: 160ms; }
-
-.loading-product {
-  display: grid;
-  grid-template-columns: 58px minmax(0, 1fr);
-  align-items: center;
-  gap: 13px;
-}
-
-.loading-product-image {
-  width: 58px;
-  height: 66px;
-  display: grid;
-  overflow: hidden;
-  place-items: center;
-  border-radius: var(--radius-sm);
-  background: var(--muted);
-  box-shadow: var(--shadow-ring);
-}
-
-.loading-product-image img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.loading-product p {
-  color: var(--muted-foreground);
-  font-size: 11.5px;
-  font-weight: 700;
-  line-height: 1.25;
-}
-
-.loading-product h2 {
-  margin-top: 3px;
-  color: var(--foreground);
-  font-size: 14.5px;
-  font-weight: 760;
-  line-height: 1.22;
-}
-
-.loading-product span {
-  display: block;
-  margin-top: 4px;
-  color: var(--muted-foreground);
-  font-size: 12px;
-  font-weight: 600;
 }
 
 /* Tracker */
@@ -737,81 +884,12 @@ button {
   color: color-mix(in srgb, var(--muted-foreground) 64%, var(--background));
 }
 
-/* Skeleton preview */
-
-.loading-skeleton {
-  display: grid;
-  gap: 16px;
-  border-top: 1px solid var(--border);
-  padding-top: 20px;
-  opacity: 0.55;
-}
-
-.skeleton-hero {
-  display: grid;
-  grid-template-columns: 56px minmax(0, 1fr);
-  align-items: center;
-  gap: 13px;
-}
-
-.skeleton-stack,
-.skeleton-verdict,
-.skeleton-tile-row {
-  display: grid;
-  gap: 9px;
-}
-
-.skeleton-block,
-.skeleton-line,
-.skeleton-row {
-  overflow: hidden;
-  border-radius: var(--radius-xs);
-  background: linear-gradient(90deg, var(--skeleton) 0%, var(--skeleton-highlight) 45%, var(--skeleton) 90%);
-  background-size: 220% 100%;
-  animation: skeletonPulse 2.1s ease-in-out infinite;
-}
-
-.skeleton-image {
-  width: 56px;
-  height: 64px;
-  border-radius: var(--radius-sm);
-}
-
-.skeleton-line {
-  height: 13px;
-}
-
-.skeleton-line--wide {
-  width: 46%;
-}
-
-.skeleton-line--medium {
-  width: 30%;
-}
-
-.skeleton-line--full {
-  width: 92%;
-}
-
-.skeleton-line--long {
-  width: 72%;
-}
-
-.skeleton-tile-row {
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-}
-
-.skeleton-row {
-  height: 58px;
-  border-radius: var(--radius-sm);
-}
-
 /* Loading footer */
 
 .loading-footer {
   display: grid;
   gap: 9px;
+  view-transition-name: dock;
 }
 
 .loading-footer p {
@@ -845,6 +923,7 @@ button {
   display: flex;
   flex-direction: column;
   gap: 20px;
+  margin-top: 4px;
 }
 
 .result-flow > * {
@@ -858,94 +937,16 @@ button {
 .result-flow > :nth-child(5) { animation-delay: 320ms; }
 .result-flow > :nth-child(6) { animation-delay: 390ms; }
 
-/* Product hero */
+/* Verdict block */
 
 .scouted-hero {
   display: grid;
   padding: 2px 0 0;
 }
 
-.scouted-product-row {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-}
-
-.scouted-product-image {
-  width: 76px;
-  height: 88px;
-  flex: 0 0 auto;
-  perspective: 480px;
-  touch-action: none;
-}
-
-.tilt-inner {
-  position: relative;
-  display: grid;
-  width: 100%;
-  height: 100%;
-  overflow: hidden;
-  place-items: center;
-  border-radius: var(--radius-md);
-  background: var(--muted);
-  box-shadow: var(--shadow-ring), var(--shadow-card);
-  transform: rotateX(var(--tilt-x, 0deg)) rotateY(var(--tilt-y, 0deg));
-  transition: transform 520ms var(--ease-spring);
-  will-change: transform;
-}
-
-.tilt-inner img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.tilt-glare {
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background: radial-gradient(120px circle at var(--glare-x, 50%) var(--glare-y, 50%), rgb(255 255 255 / 0.32), transparent 62%);
-  opacity: var(--glare-opacity, 0);
-  pointer-events: none;
-  transition: opacity 420ms var(--ease-out);
-}
-
-.scouted-product-copy {
-  min-width: 0;
-}
-
-.scouted-product-copy p {
-  overflow: hidden;
-  color: var(--muted-foreground);
-  font-size: 11.5px;
-  font-weight: 720;
-  letter-spacing: 0.02em;
-  line-height: 1.3;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.scouted-product-copy h2 {
-  margin-top: 3px;
-  color: var(--foreground);
-  font-size: 16.5px;
-  font-weight: 760;
-  line-height: 1.24;
-}
-
-.scouted-product-copy span {
-  display: block;
-  margin-top: 4px;
-  color: var(--muted-foreground);
-  font-size: 13px;
-  font-variant-numeric: tabular-nums;
-  font-weight: 600;
-  line-height: 1.25;
-}
-
 .result-divider {
   height: 1px;
-  margin: 16px 0;
+  margin: 12px 0 16px;
   background: var(--border);
 }
 
@@ -953,19 +954,31 @@ button {
 
 .rating-row {
   display: flex;
-  align-items: stretch;
+  align-items: flex-start;
   gap: 15px;
 }
 
 .grade-tile {
+  position: relative;
   display: grid;
   width: 74px;
-  min-height: 74px;
+  height: 74px;
   flex: 0 0 auto;
+  overflow: hidden;
   place-content: center;
   border-radius: var(--radius-lg);
   color: #fff;
   animation: gradePop 640ms var(--ease-spring) 120ms both;
+}
+
+/* One-shot light sweep as the verdict lands. */
+.grade-sheen {
+  position: absolute;
+  inset: -20%;
+  background: linear-gradient(115deg, transparent 38%, rgb(255 255 255 / 0.34) 50%, transparent 62%);
+  pointer-events: none;
+  transform: translateX(-130%);
+  animation: sheenSweep 880ms var(--ease-out) 700ms forwards;
 }
 
 .grade-tile--positive {
@@ -2162,16 +2175,6 @@ input[type="range"] {
   }
 }
 
-@keyframes skeletonPulse {
-  0% {
-    background-position: 120% 0;
-  }
-
-  100% {
-    background-position: -120% 0;
-  }
-}
-
 @keyframes progressSweep {
   0%,
   100% {
@@ -2180,6 +2183,83 @@ input[type="range"] {
 
   50% {
     transform: translateX(233%);
+  }
+}
+
+@keyframes sheenSweep {
+  to {
+    transform: translateX(130%);
+  }
+}
+
+@keyframes hintIn {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+/* View transitions: state swaps morph instead of jump-cutting. The stage,
+   product copy, wordmark and bottom dock are tracked as named groups so the
+   product stays one continuous object from sample -> scan -> verdict. */
+
+@media (prefers-reduced-motion: no-preference) {
+  ::view-transition-group(*) {
+    animation-duration: 460ms;
+    animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  ::view-transition-old(root) {
+    animation: vtDriftOut 240ms var(--ease-out) forwards;
+  }
+
+  ::view-transition-new(root) {
+    animation: vtDriftIn 440ms var(--ease-out) both;
+  }
+
+  ::view-transition-old(dock) {
+    animation: vtFadeOut 200ms var(--ease-out) forwards;
+  }
+
+  ::view-transition-old(stage),
+  ::view-transition-old(product-copy) {
+    animation: vtFadeOut 320ms var(--ease-out) forwards;
+  }
+
+  ::view-transition-new(stage),
+  ::view-transition-new(product-copy) {
+    animation: vtFadeIn 360ms var(--ease-out) both;
+  }
+}
+
+@keyframes vtDriftOut {
+  to {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+}
+
+@keyframes vtDriftIn {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+}
+
+@keyframes vtFadeOut {
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes vtFadeIn {
+  from {
+    opacity: 0;
   }
 }
 
@@ -2215,18 +2295,12 @@ input[type="range"] {
     gap: 12px;
   }
 
-  .sample-grade {
-    width: 66px;
-    height: 66px;
+  .analysis-stage {
+    height: 196px;
   }
 
-  .sample-grade strong {
-    font-size: 22px;
-  }
-
-  .scouted-product-image {
-    width: 68px;
-    height: 78px;
+  .sample-stage .product-stage {
+    height: 146px;
   }
 
   .rating-row {
@@ -2235,7 +2309,7 @@ input[type="range"] {
 
   .grade-tile {
     width: 66px;
-    min-height: 66px;
+    height: 66px;
   }
 
   .grade-score {
