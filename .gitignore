@@ -7,3 +7,4 @@ quality-check-stage1-panel.png
 .env
 .env.local
 .env.*.local
+shots/
