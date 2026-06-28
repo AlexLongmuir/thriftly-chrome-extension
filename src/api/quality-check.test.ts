@@ -192,6 +192,7 @@ describe("quality-check API", () => {
       recommendationCandidate("generic-white-trainer", "white leather trainers same price", 0.6),
       recommendationCandidate("minimal-low-profile-trainer", "minimalist low-profile court trainers low branding smart casual", 0.6)
     ];
+    candidates[1].image_url = "https://cdn.example.com/minimal-low-profile-trainer.jpg";
     const storage = {
       getByCanonicalKey: vi.fn(async () => null),
       upsert: vi.fn(async (record) => ({ ...record, id: "analysis-new" })),
@@ -209,7 +210,30 @@ describe("quality-check API", () => {
     });
 
     expect(result.recommendations?.[0]?.id).toBe("minimal-low-profile-trainer");
+    expect(result.recommendations?.[0]?.image_url).toBe("https://cdn.example.com/minimal-low-profile-trainer.jpg");
     expect(analysis).toBeDefined();
+  });
+
+  it("does not return visible recommendations when no vector embedding is available", async () => {
+    const payload = createPayload({ imageUrls: [] });
+    const storage = {
+      getByCanonicalKey: vi.fn(async () => null),
+      upsert: vi.fn(async (record) => ({ ...record, id: "analysis-new" })),
+      findRecommendationCandidates: vi.fn(async () => [recommendationCandidate("candidate", "same style", 0.9)])
+    };
+
+    const result = await handleQualityCheckPayload(payload, {
+      env: testEnv({ SUPABASE_URL: "https://supabase.example", SUPABASE_SERVICE_ROLE_KEY: "service-role" }),
+      storage,
+      fetcher: async (input, init) => {
+        if (String(input) === "https://api.openai.com/v1/responses" && isStage6Request(init)) return mockOpenAIVerdictResponse();
+        if (String(input) === "https://api.openai.com/v1/embeddings") return new Response("Embedding unavailable", { status: 500 });
+        return new Response("Unhandled test fetch", { status: 500 });
+      }
+    });
+
+    expect(result.recommendations).toEqual([]);
+    expect(storage.findRecommendationCandidates).not.toHaveBeenCalled();
   });
 
   it("sends approved examples as calibration context without deterministic baseline scoring", async () => {

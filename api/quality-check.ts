@@ -2861,6 +2861,7 @@ async function safeRecommendationCandidates(
   storage: ProductIntelligenceRepository,
   query: RecommendationQuery
 ): Promise<RecommendationCandidate[]> {
+  if (!query.embedding) return [];
   try {
     const candidates = await storage.findRecommendationCandidates(query);
     return rankRecommendationCandidates(candidates, query).slice(0, 3);
