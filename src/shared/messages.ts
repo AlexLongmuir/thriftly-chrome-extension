@@ -370,6 +370,11 @@ export type BackendVerdict = {
   receivedUrl: string;
   source: "backend" | "mock";
   capturedTitle: string;
+  cache_status?: "hit" | "miss" | "refresh" | "disabled" | "error_fallback";
+  analysis_id?: string;
+  cached_at?: string;
+  expires_at?: string;
+  recommendations?: RecommendationCandidate[];
   analysis?: BackendAnalysis;
 };
 
@@ -381,6 +386,7 @@ export type BackendPayload = {
     stage: "stage_5";
     version: string;
   };
+  refresh?: "force";
 };
 
 export type VerdictEvidenceType =
@@ -458,6 +464,20 @@ export type MatchedApprovedExample = {
   similarity: number;
   expected_scores: VerdictScores;
   recommendation: Recommendation;
+};
+
+export type RecommendationCandidate = {
+  id: string;
+  source: "analysed_product" | "approved_example";
+  title: string;
+  brand: string | null;
+  url: string;
+  image_url?: string | null;
+  price_display: string | null;
+  scores: VerdictScores;
+  recommendation: Recommendation;
+  match_reason: string;
+  similarity: number;
 };
 
 export type Stage6Verdict = {

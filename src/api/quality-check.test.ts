@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { handleQualityCheckPayload } from "../../api/quality-check";
-import type { BackendPayload, ProductFieldName, ShopperSignal } from "../shared/messages";
+import { buildPageFingerprint, buildStyleAwareEmbeddingText, canonicalProductKeyForPayload, handleQualityCheckPayload } from "../../api/quality-check";
+import type { BackendAnalysis, BackendPayload, ProductFieldName, RecommendationCandidate, ShopperSignal } from "../shared/messages";
 
 describe("quality-check API", () => {
   beforeEach(() => {
@@ -56,6 +56,160 @@ describe("quality-check API", () => {
         }
       })
     ).rejects.toThrow("OpenAI verdict response was missing scores.");
+  });
+
+  it("fingerprints only material product facts", () => {
+    const base = createPayload({ imageUrls: ["https://cdn.example.com/product.png"] });
+    const noisy = structuredClone(base);
+    noisy.page.visibleText = "Different navigation footer and promo text";
+    noisy.page.capturedAt = "2026-06-05T12:00:00.000Z";
+
+    const changed = structuredClone(base);
+    changed.page.product.fields.price = field("145");
+
+    expect(buildPageFingerprint(noisy)).toBe(buildPageFingerprint(base));
+    expect(buildPageFingerprint(changed)).not.toBe(buildPageFingerprint(base));
+  });
+
+  it("returns a fresh cached analysis without calling models", async () => {
+    const payload = createPayload({ imageUrls: [] });
+    const cachedAnalysis = createCachedAnalysis(payload);
+    const cachedRecord = {
+      id: "analysis-cached",
+      canonical_product_key: canonicalProductKeyForPayload(payload),
+      product_url: payload.page.url,
+      retailer_domain: "shop.example",
+      page_fingerprint: buildPageFingerprint(payload),
+      raw_payload: payload,
+      normalised_product: payload.classification,
+      analysis: cachedAnalysis,
+      public_evidence: [],
+      scores: cachedAnalysis.verdict.scores,
+      verdict: cachedAnalysis.verdict,
+      image_urls: [],
+      source_confidence_score: 0.86,
+      source_confidence_label: "high" as const,
+      model_config: cachedAnalysis.model_config,
+      extension_version: payload.extension.version,
+      prompt_schema_version: "stage_6_v1",
+      embedding_text: "minimal merino knitwear",
+      embedding: [0.1, 0.2],
+      matched_approved_example_ids: [],
+      created_at: "2026-06-05T00:00:00.000Z",
+      updated_at: "2026-06-05T00:00:00.000Z",
+      last_analysed_at: "2026-06-05T00:00:00.000Z",
+      expires_at: "2999-01-01T00:00:00.000Z"
+    };
+    const storage = {
+      getByCanonicalKey: vi.fn(async () => cachedRecord),
+      upsert: vi.fn(),
+      findRecommendationCandidates: vi.fn(async () => [])
+    };
+
+    const result = await handleQualityCheckPayload(payload, {
+      env: testEnv({ SUPABASE_URL: "https://supabase.example", SUPABASE_SERVICE_ROLE_KEY: "service-role" }),
+      requestId: () => "cached-request",
+      storage,
+      fetcher: async () => {
+        throw new Error("models should not be called on a cache hit");
+      }
+    });
+
+    expect(result.cache_status).toBe("hit");
+    expect(result.analysis_id).toBe("analysis-cached");
+    expect(result.analysis?.verdict.recommendation).toBe("worth_buying");
+    expect(storage.upsert).not.toHaveBeenCalled();
+  });
+
+  it("force refresh bypasses a valid cached record and persists a new analysis", async () => {
+    const payload = { ...createPayload({ imageUrls: [] }), refresh: "force" as const };
+    const storage = {
+      getByCanonicalKey: vi.fn(async () => {
+        throw new Error("cache should not be read for forced refresh");
+      }),
+      upsert: vi.fn(async (record) => ({ ...record, id: "analysis-refresh" })),
+      findRecommendationCandidates: vi.fn(async () => [])
+    };
+    const calls: string[] = [];
+
+    const result = await handleQualityCheckPayload(payload, {
+      env: testEnv({ SUPABASE_URL: "https://supabase.example", SUPABASE_SERVICE_ROLE_KEY: "service-role" }),
+      requestId: () => "refresh-request",
+      storage,
+      fetcher: async (input, init) => {
+        calls.push(String(input));
+        if (String(input) === "https://api.openai.com/v1/responses" && isStage6Request(init)) return mockOpenAIVerdictResponse();
+        if (String(input) === "https://api.openai.com/v1/embeddings") return mockEmbeddingResponse();
+        return new Response("Unhandled test fetch", { status: 500 });
+      }
+    });
+
+    expect(result.cache_status).toBe("refresh");
+    expect(result.analysis_id).toBe("analysis-refresh");
+    expect(calls).toContain("https://api.openai.com/v1/responses");
+    expect(calls).toContain("https://api.openai.com/v1/embeddings");
+    expect(storage.upsert).toHaveBeenCalledWith(expect.objectContaining({ embedding_text: expect.stringContaining("INFERRED STYLE") }));
+  });
+
+  it("builds style-aware embedding text from facts, visual cues, and analysis", () => {
+    const payload = createPayload({ imageUrls: ["https://cdn.example.com/minimal-trainer.png"] });
+    payload.classification = {
+      ...payload.classification,
+      category: "footwear",
+      material_family: "leather",
+      primary_colour: "white",
+      style_tags: ["minimal", "smart casual"],
+      use_case: "office casual",
+      price: "£120"
+    };
+    payload.page.product.fields.title = field("Minimal White Leather Trainers");
+    payload.page.product.fields.description = field("Low-profile court trainers with a smooth plain upper and subtle logo.");
+    const analysis = createCachedAnalysis(payload);
+    analysis.classification = payload.classification;
+    analysis.visual_enrichment.visual_cues = [
+      {
+        cue: "Smooth white upper with simple paneling and low-contrast sole.",
+        evidence_type: "aesthetic_cue",
+        confidence: "medium",
+        image_limitations: []
+      }
+    ];
+
+    const text = buildStyleAwareEmbeddingText(payload, analysis);
+
+    expect(text).toContain("FACTS");
+    expect(text).toContain("INFERRED STYLE");
+    expect(text).toContain("VISUAL CUES");
+    expect(text).toContain("minimalist");
+    expect(text).toContain("low-profile court-style silhouette");
+    expect(text).toContain("Avoid matching with: chunky, technical, sporty, high-contrast, heavily branded");
+  });
+
+  it("ranks stylistically similar recommendations above generic same-category alternatives", async () => {
+    const payload = createPayload({ imageUrls: [] });
+    const analysis = createCachedAnalysis(payload);
+    const candidates: RecommendationCandidate[] = [
+      recommendationCandidate("generic-white-trainer", "white leather trainers same price", 0.6),
+      recommendationCandidate("minimal-low-profile-trainer", "minimalist low-profile court trainers low branding smart casual", 0.6)
+    ];
+    const storage = {
+      getByCanonicalKey: vi.fn(async () => null),
+      upsert: vi.fn(async (record) => ({ ...record, id: "analysis-new" })),
+      findRecommendationCandidates: vi.fn(async () => candidates)
+    };
+
+    const result = await handleQualityCheckPayload(payload, {
+      env: testEnv({ SUPABASE_URL: "https://supabase.example", SUPABASE_SERVICE_ROLE_KEY: "service-role" }),
+      storage,
+      fetcher: async (input, init) => {
+        if (String(input) === "https://api.openai.com/v1/responses" && isStage6Request(init)) return mockOpenAIVerdictResponse();
+        if (String(input) === "https://api.openai.com/v1/embeddings") return mockEmbeddingResponse();
+        return new Response("Unhandled test fetch", { status: 500 });
+      }
+    });
+
+    expect(result.recommendations?.[0]?.id).toBe("minimal-low-profile-trainer");
+    expect(analysis).toBeDefined();
   });
 
   it("sends approved examples as calibration context without deterministic baseline scoring", async () => {
@@ -2061,6 +2215,132 @@ function mockEvidenceAgentResponse(): Response {
       rejected_sources: []
     })
   });
+}
+
+function mockEmbeddingResponse(): Response {
+  return Response.json({
+    data: [
+      {
+        embedding: Array.from({ length: 8 }, (_, index) => index / 10)
+      }
+    ]
+  });
+}
+
+function createCachedAnalysis(payload: BackendPayload): BackendAnalysis {
+  return {
+    stage: "stage_6",
+    status: "completed",
+    product: {
+      title: getStringField(payload, "title") || payload.page.title,
+      url: payload.page.url,
+      page_state: payload.page.product.page_state,
+      source_confidence_score: payload.page.product.source_confidence_score,
+      source_confidence_label: payload.classification.source_confidence_label
+    },
+    classification: payload.classification,
+    page_evidence: [],
+    external_evidence: [],
+    benchmark_evidence: [],
+    external_coverage: "none",
+    external_sources_found: false,
+    useful_sources_count: 0,
+    external_score_impact: "none",
+    rejected_sources: [],
+    key_external_insights: [],
+    repeated_themes: [],
+    conflicting_evidence: [],
+    evidence_gaps: [],
+    cross_source_themes: [],
+    public_evidence: [],
+    visual_enrichment: {
+      status: "skipped",
+      model: "gemini-3.0-flash",
+      image_count: payload.page.product.image_urls.length,
+      observations: [],
+      visual_cues: [],
+      expert_inferences: [],
+      missing_views: [],
+      image_quality_limits: [],
+      warnings: []
+    },
+    verdict: {
+      overall_rating: 7.2,
+      recommendation: "worth_buying",
+      recommendation_summary: "Strong fabric signal, with a few checks left.",
+      scores: {
+        quality: 7.4,
+        value: 6.8,
+        durability: 6.5,
+        aesthetic: 7.1,
+        confidence: 0.86
+      },
+      confidence_label: "high",
+      good_signs: [
+        {
+          label: "Minimal clean styling",
+          detail: "The product reads as simple and versatile.",
+          related_metric: "style",
+          confidence: "high",
+          evidence_basis: [{ type: "product_fact", source: "page", claim: "minimal styling" }]
+        }
+      ],
+      watch_outs: [],
+      unverified: [],
+      verdicts: {
+        quality: { verdict: "Strong material signal.", confidence: "high", evidence_type: "stated_on_page" },
+        value: { verdict: "Fair price context.", confidence: "medium", evidence_type: "similar_approved_example" },
+        durability: { verdict: "Care details matter.", confidence: "medium", evidence_type: "general_material_knowledge" },
+        aesthetic: { verdict: "Clean and versatile.", confidence: "medium", evidence_type: "inferred_from_image" }
+      },
+      reasoning_flags: [],
+      matched_examples: [],
+      evidence_score_effects: [],
+      summary: "Strong fabric signal, with a few checks left.",
+      model: "gpt-5.4-mini",
+      model_status: "model_completed"
+    },
+    approved_examples: [],
+    timings_ms: {
+      total_backend: 1,
+      visual_enrichment: 0,
+      external_evidence: 0,
+      stage6_verdict: 1
+    },
+    model_config: {
+      vision_model: "gemini-3.0-flash",
+      core_model: "gpt-5.4-mini",
+      embedding_model: "text-embedding-3-small",
+      openai_configured: true
+    }
+  };
+}
+
+function recommendationCandidate(id: string, matchReason: string, similarity: number): RecommendationCandidate {
+  return {
+    id,
+    source: "analysed_product",
+    title: id,
+    brand: "Example",
+    url: `https://example.com/${id}`,
+    image_url: null,
+    price_display: "£100",
+    scores: {
+      quality: 8.1,
+      value: 7.5,
+      durability: 7.2,
+      aesthetic: 7.8,
+      confidence: 0.82
+    },
+    recommendation: "worth_buying",
+    match_reason: matchReason,
+    similarity
+  };
+}
+
+function getStringField(payload: BackendPayload, fieldName: ProductFieldName): string | null {
+  const value = payload.page.product.fields[fieldName].value;
+  return typeof value === "string" ? value : null;
 }
 
 function delay(ms: number): Promise<void> {
