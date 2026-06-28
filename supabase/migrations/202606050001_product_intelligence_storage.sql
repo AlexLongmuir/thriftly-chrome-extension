@@ -109,7 +109,7 @@ as $$
       coalesce(r.analysis->'product'->>'title', r.normalised_product->>'title', '') as title,
       r.normalised_product->>'brand' as brand,
       r.product_url as url,
-      r.image_urls[1] as image_url,
+      nullif(r.image_urls[1], '') as image_url,
       r.normalised_product->>'price' as price_display,
       r.scores,
       r.verdict->>'recommendation' as recommendation,
@@ -120,14 +120,13 @@ as $$
         r.normalised_product->>'use_case',
         r.embedding_text
       ) as match_reason,
-      case
-        when query_embedding is null or r.embedding is null then 0.6
-        else 1 - (r.embedding <=> query_embedding)
-      end as similarity
+      1 - (r.embedding <=> query_embedding) as similarity
     from public.product_intelligence_records r
     where r.canonical_product_key <> query_canonical_product_key
       and r.normalised_product->>'category' = query_category
       and r.source_confidence_score >= 0.45
+      and query_embedding is not null
+      and r.embedding is not null
       and r.expires_at > now()
   ),
   approved as (
@@ -137,18 +136,17 @@ as $$
       e.title,
       e.brand,
       e.url,
-      e.image_url,
+      nullif(e.image_url, '') as image_url,
       e.price_display,
       e.expected_scores as scores,
       e.recommendation,
       concat_ws(', ', e.category, e.material_family, array_to_string(e.style_tags, ', '), e.embedding_text) as match_reason,
-      case
-        when query_embedding is null or e.embedding is null then 0.58
-        else 1 - (e.embedding <=> query_embedding)
-      end as similarity
+      1 - (e.embedding <=> query_embedding) as similarity
     from public.approved_product_examples e
     where e.category = query_category
       and e.confidence >= 0.45
+      and query_embedding is not null
+      and e.embedding is not null
   )
   select *
   from (
@@ -159,4 +157,3 @@ as $$
   order by similarity desc
   limit greatest(match_count, 1);
 $$;
-

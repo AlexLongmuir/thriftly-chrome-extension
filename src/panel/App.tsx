@@ -9,15 +9,16 @@ import type {
   BackendAnalysis,
   BackendVerdict,
   DimensionVerdict,
-  MatchedApprovedExample,
   ProductClassification,
   Recommendation,
+  RecommendationCandidate,
   ShopperSignal,
   Stage6Verdict
 } from "../shared/messages";
 import { createBackendPayload } from "../shared/pageSnapshot";
 import { createVisualEnrichment } from "../shared/visualEnrichment";
 import { requestActiveTabExtraction } from "./chromeApi";
+import { buildRecommendationAlternatives, type AlternativeItem } from "./recommendationAlternatives";
 
 type Status = "idle" | "extracting" | "sending" | "scoring" | "complete" | "error";
 type ActivePage = "summary" | "alternatives" | "how-it-works";
@@ -75,6 +76,7 @@ export function App() {
   const productBrand = analysis?.classification.brand || extractedBrand;
   const productPrice = analysis?.classification.price || extractedPrice;
   const productImage = extraction?.snapshot.product.imageUrls[0] ?? null;
+  const recommendations = verdict?.recommendations ?? [];
   const loadingTitle = extractedTitle || "Reading current page";
   const loadingBrand = extraction ? extractedBrand : "Scouted";
   const loadingPrice = extraction ? classification?.price || extractedPrice : null;
@@ -131,7 +133,7 @@ export function App() {
           </footer>
         </>
       ) : activePage === "alternatives" && analysis ? (
-        <AlternativesPage approvedExamples={analysis.approved_examples} onBack={() => setActivePage("summary")} />
+        <AlternativesPage recommendations={recommendations} onBack={() => setActivePage("summary")} />
       ) : isChecking || analysis ? (
         <>
           <div className="state-scroll state-scroll--analysis">
@@ -144,6 +146,7 @@ export function App() {
               imageUrl={isChecking ? loadingImage : productImage}
               classification={classification}
               analysis={analysis}
+              recommendations={recommendations}
               resultKey={verdict?.requestId ?? "result"}
               onRefresh={handleRunCheck}
               onViewAllAlternatives={() => setActivePage("alternatives")}
@@ -238,6 +241,7 @@ function AnalysisView({
   imageUrl,
   classification,
   analysis,
+  recommendations,
   resultKey,
   onRefresh,
   onViewAllAlternatives
@@ -250,6 +254,7 @@ function AnalysisView({
   imageUrl: string | null;
   classification: ProductClassification | null;
   analysis: BackendAnalysis | null;
+  recommendations: RecommendationCandidate[];
   resultKey: string;
   onRefresh: () => void;
   onViewAllAlternatives: () => void;
@@ -294,7 +299,7 @@ function AnalysisView({
           <SignsSection title="In its favour" tone="positive" items={analysis.verdict.good_signs} />
           <SignsSection title="Worth watching" tone="negative" items={analysis.verdict.watch_outs} />
           <SignsSection title="Couldn’t verify" tone="neutral" items={analysis.verdict.unverified} />
-          <AlternativesSection approvedExamples={analysis.approved_examples} onViewAll={onViewAllAlternatives} />
+          <AlternativesSection recommendations={recommendations} onViewAll={onViewAllAlternatives} />
           <HowScoresSection verdict={analysis.verdict} />
         </div>
       ) : null}
@@ -909,8 +914,8 @@ function LifespanSection({
   );
 }
 
-function AlternativesSection({ approvedExamples, onViewAll }: { approvedExamples: MatchedApprovedExample[]; onViewAll: () => void }) {
-  const alternatives = buildAlternatives(approvedExamples);
+function AlternativesSection({ recommendations, onViewAll }: { recommendations: RecommendationCandidate[]; onViewAll: () => void }) {
+  const alternatives = buildRecommendationAlternatives(recommendations);
   if (alternatives.length === 0) return null;
 
   return (
@@ -926,8 +931,8 @@ function AlternativesSection({ approvedExamples, onViewAll }: { approvedExamples
   );
 }
 
-function AlternativesPage({ approvedExamples, onBack }: { approvedExamples: MatchedApprovedExample[]; onBack: () => void }) {
-  const alternatives = buildAlternatives(approvedExamples);
+function AlternativesPage({ recommendations, onBack }: { recommendations: RecommendationCandidate[]; onBack: () => void }) {
+  const alternatives = buildRecommendationAlternatives(recommendations);
 
   return (
     <section className="alternatives-page page-enter">
@@ -953,19 +958,6 @@ function ViewAllAlternativesRow({ count, onViewAll }: { count: number; onViewAll
   );
 }
 
-function buildAlternatives(approvedExamples: MatchedApprovedExample[]): AlternativeItem[] {
-  return approvedExamples
-    .filter((approvedExample) => approvedExample.brand && approvedExample.title && approvedExample.url && approvedExample.price_display)
-    .map((approvedExample) => ({
-      brand: approvedExample.brand,
-      itemName: approvedExample.title,
-      price: approvedExample.price_display,
-      rating: approvedExample.score ?? scoreOutOf100(approvedExample.expected_scores.value),
-      url: approvedExample.url,
-      thumbnail: approvedExample.image_url ?? null
-    }));
-}
-
 function AlternativeRow({ alternative }: { alternative: AlternativeItem }) {
   function handleOpenAlternative() {
     window.open(alternative.url, "_blank", "noopener,noreferrer");
@@ -974,7 +966,7 @@ function AlternativeRow({ alternative }: { alternative: AlternativeItem }) {
   return (
     <button className="alternative-row" type="button" onClick={handleOpenAlternative}>
       <div className="alternative-thumb">
-        {alternative.thumbnail ? <img src={alternative.thumbnail} alt="" /> : <ShirtPlaceholder />}
+        <AlternativeThumbnail src={alternative.thumbnail} />
       </div>
       <div className="alternative-copy">
         <span>{toTitleCase(alternative.brand)}</span>
@@ -983,9 +975,16 @@ function AlternativeRow({ alternative }: { alternative: AlternativeItem }) {
       <div className="alternative-score">
         <span>{alternative.price}</span>
         <strong>{alternative.rating}<small>/100</small></strong>
+        <small>{alternative.matchLabel}</small>
       </div>
     </button>
   );
+}
+
+function AlternativeThumbnail({ src }: { src: string | null }) {
+  const [failed, setFailed] = useState(false);
+  if (!src || failed) return <ShirtPlaceholder />;
+  return <img src={src} alt="" onError={() => setFailed(true)} />;
 }
 
 function HowScoresSection({ verdict }: { verdict: Stage6Verdict }) {
@@ -1057,15 +1056,6 @@ function LegacyDebugSections({
     </div>
   );
 }
-
-type AlternativeItem = {
-  brand: string;
-  itemName: string;
-  price: string;
-  rating: number;
-  url: string;
-  thumbnail: string | null;
-};
 
 function SignalIcon({ category, tone }: { category: SignalIconMetric; tone: SignalTone }) {
   if (category === "material" || category === "quality") {
