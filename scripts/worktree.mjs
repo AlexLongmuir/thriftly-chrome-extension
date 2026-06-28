@@ -7,7 +7,9 @@ import process from "node:process";
 import { spawnSync } from "node:child_process";
 
 const DEFAULT_PRIMARY_ROOT = "/Users/alex/Documents/thriftly-chrome-extension";
-const DEFAULT_WORKTREE_ROOT = "/Users/alex/Documents/scouted-worktrees";
+const LEGACY_WORKTREE_ROOT = "/Users/alex/Documents/scouted-worktrees";
+const TEMP_WORKTREE_ROOT = "/private/tmp/scouted-worktrees";
+const DEFAULT_WORKTREE_ROOT = process.env.SCOUTED_WORKTREE_ROOT || TEMP_WORKTREE_ROOT;
 
 function main() {
   const [command, ...args] = process.argv.slice(2);
@@ -209,7 +211,7 @@ function installHooks() {
 
 function printHelp() {
   console.log(`Usage:
-  npm run chat:new -- <task-name> [--from <ref>] [--branch <branch>]
+  npm run chat:new -- <task-name> [--from <ref>] [--branch <branch>] [--root <path>]
   npm run chat:list
   npm run chat:done -- <task-name|branch|path>
   npm run chat:cleanup [-- --apply]
@@ -357,6 +359,9 @@ function isPrimaryRoot(rootPath) {
 function isManagedWorktreePath(worktreePath) {
   const resolved = path.resolve(worktreePath);
   return resolved.startsWith(path.resolve(DEFAULT_WORKTREE_ROOT) + path.sep) ||
+    resolved.startsWith(path.resolve(TEMP_WORKTREE_ROOT) + path.sep) ||
+    resolved.startsWith(path.resolve(LEGACY_WORKTREE_ROOT) + path.sep) ||
+    resolved.startsWith("/private/tmp/scouted-") ||
     resolved.startsWith(path.join(os.tmpdir(), "scouted-"));
 }
 
